@@ -97,14 +97,14 @@ export function drawGridImage(title: string, subtitle: string, rows: ImageRow[])
     g.fillText(r.due ? `₹${rupees(r.due)}` : '✓', x0 + nameW + 12 * cellW + dueW - 6, y + rowH / 2);
   });
 
-  // Cell borders
-  g.strokeStyle = '#ffffff';
+  // Black borders around every cell, header row and name/due columns included.
+  g.strokeStyle = '#000000';
+  g.lineWidth = 0.75;
+  const xs = [x0, ...Array.from({ length: 13 }, (_, i) => x0 + nameW + i * cellW), width - pad];
+  const ys = [y0, ...Array.from({ length: rows.length + 1 }, (_, i) => y0 + headH + i * rowH)];
+  for (const x of xs) { g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y0 + tableH); g.stroke(); }
+  for (const y of ys) { g.beginPath(); g.moveTo(x0, y); g.lineTo(width - pad, y); g.stroke(); }
   g.lineWidth = 1;
-  for (let i = 0; i <= 12; i++) { g.beginPath(); g.moveTo(x0 + nameW + i * cellW, y0 + headH); g.lineTo(x0 + nameW + i * cellW, y0 + tableH); g.stroke(); }
-  for (let ri = 0; ri <= rows.length; ri++) { g.beginPath(); g.moveTo(x0 + nameW, y0 + headH + ri * rowH); g.lineTo(x0 + nameW + 12 * cellW, y0 + headH + ri * rowH); g.stroke(); }
-  g.strokeStyle = '#d0d5dd';
-  g.beginPath(); g.moveTo(x0, y0 + headH); g.lineTo(width - pad, y0 + headH); g.stroke();
-  g.beginPath(); g.moveTo(x0, y0 + tableH); g.lineTo(width - pad, y0 + tableH); g.stroke();
 
   g.textAlign = 'left';
   g.font = `11px ${font}`;

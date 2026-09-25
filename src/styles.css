@@ -94,7 +94,8 @@ tr.clickable:hover td, .clickable:hover { background: #f7faf9; cursor: pointer; 
 .report-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .report .actions { margin: 0; }
 .grid-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-height: 72vh; }
-table.grid td.gc { min-width: 46px; text-align: center; cursor: pointer; padding: 5px 3px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; border: 1px solid #fff; }
+table.grid td.gc { min-width: 46px; text-align: center; cursor: pointer; padding: 5px 3px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+table.grid th, table.grid td { border: 1px solid #000; }
 table.grid th.sticky { white-space: nowrap; font-weight: 600; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0; font-size: 13px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
