@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.private/
+# Never commit real financial records
+*.xlsx
+*.xls
+*.xlsm
+*.CSV
+*.csv
+*.backup.json
+sahho-backup-*.json
+sahho-before-replace-*.json
+.env*
+!.env.example
+.claude/

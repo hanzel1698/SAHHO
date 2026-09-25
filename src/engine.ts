@@ -1,0 +1,401 @@
+// Obligations, allocation and review decisions. Pure functions over State (no UI).
+import { Allocation, Category, Member, Receipt, State, audit, contributionCategories, id, money, monthLabel, norm, today } from './model';
+import { matchCategory, matchMember, patternCategory, validateToken } from './matching';
+
+export function addMonth(month: string, n = 1) {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7);
+}
+export function months(from: string, to: string) {
+  const out: string[] = [];
+  for (let m = from; m <= to && out.length < 1200; m = addMonth(m)) out.push(m);
+  return out;
+}
+export const monthOf = (date: string) => date.slice(0, 7);
+
+export function rateFor(s: State, month: string) {
+  return [...s.settings.rates].sort((a, b) => b.from.localeCompare(a.from)).find(r => r.from <= month)?.amount ?? 0;
+}
+
+/** Regular contribution due for a month. Zero before the confirmed start month or after leaving. */
+export function due(s: State, m: Member, month: string) {
+  if (!m.start || month < m.start || (m.inactiveFrom && month >= m.inactiveFrom)) return 0;
+  const exception = m.exceptions.find(e => month >= e.from && month <= e.to);
+  if (exception) return exception.amount;
+  return rateFor(s, month);
+}
+
+/** Last month whose contribution is due on the cutoff date (a month is due on settings.dueDay). */
+export function lastDueMonth(s: State, cutoff: string) {
+  return Number(cutoff.slice(8, 10)) >= s.settings.dueDay ? monthOf(cutoff) : addMonth(monthOf(cutoff), -1);
+}
+
+export const LATEST = '9999-12-31';
+
+/**
+ * Whether an allocation counts at the cutoff. Bank-linked allocations count from the receipt date;
+ * legacy allocations count from their recorded payment date. Undated legacy allocations count only in
+ * current views (cutoff today or later), never in historical as-of reports.
+ */
+export function allocationActive(s: State, a: Allocation, cutoff = LATEST, receipts?: Map<string, Receipt>) {
+  const find = (rid: string) => receipts?.get(rid) ?? s.receipts.find(r => r.id === rid);
+  if (a.receiptId) {
+    const r = find(a.receiptId);
+    if (!r || r.status !== 'confirmed' || r.date > cutoff) return false;
+  } else if (a.received) {
+    if (a.received > cutoff) return false;
+  } else if (cutoff < today()) return false;
+  if (a.reversedBy) {
+    const rev = find(a.reversedBy);
+    if (rev && rev.status === 'confirmed' && rev.date <= cutoff) return false;
+  }
+  return true;
+}
+
+export function paid(s: State, memberId: string, month: string, cutoff = LATEST) {
+  return s.allocations
+    .filter(a => a.memberId === memberId && a.month === month && a.kind === 'regular' && allocationActive(s, a, cutoff))
+    .reduce((v, a) => v + a.amount, 0);
+}
+
+export function allocated(s: State, receiptId: string) {
+  return s.allocations.filter(a => a.receiptId === receiptId && !a.reversedBy).reduce((v, a) => v + a.amount, 0);
+}
+export function available(s: State, r: Receipt) {
+  return Math.max(0, r.credit - allocated(s, r.id));
+}
+
+// ---------- Allocation planning ----------
+
+export interface PlanLine { month: string; amount: number; kind: 'joining' | 'regular'; note: string }
+export interface Plan {
+  memberId: string;
+  lines: PlanLine[];
+  unapplied: number;
+  joining: boolean;
+  method: string;
+  problem?: string;
+}
+
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+/** Months stated in a narration. `ambiguous` means a period is mentioned but cannot be read safely. */
+export function explicitMonths(text: string, receiptDate?: string): { months?: string[]; ambiguous?: boolean } {
+  // Remove timestamps like 02/01/2026 10:57:45 and bank references so they are not read as periods.
+  const n = norm(text).replace(/\b\d{1,2}\/\d{1,2}\/\d{4}(\s+\d{1,2}:\d{2}(:\d{2})?)?/g, ' ');
+  const iso = [...n.matchAll(/\b(20\d{2})-(0[1-9]|1[0-2])\b/g)].map(m => m[0]);
+  if (iso.length === 1) return { months: iso };
+  if (iso.length === 2 && /\bTO\b|THROUGH/.test(n) && iso[0] <= iso[1]) return { months: months(iso[0], iso[1]) };
+  const monthWord = '(JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUNE?|JULY?|AUG(?:UST)?|SEPT?(?:EMBER)?|OCT(?:OBER)?|NOV(?:EMBER)?|DEC(?:EMBER)?)';
+  const range = n.match(new RegExp(`\\b${monthWord}\\s*(20\\d{2})?\\s*(?:TO|-)\\s*${monthWord}\\s+(20\\d{2})\\b`));
+  if (range) {
+    const y2 = range[4], y1 = range[2] ?? y2;
+    const a = `${y1}-${String(MONTHS.indexOf(range[1].slice(0, 3)) + 1).padStart(2, '0')}`;
+    const b = `${y2}-${String(MONTHS.indexOf(range[3].slice(0, 3)) + 1).padStart(2, '0')}`;
+    if (a <= b) return { months: months(a, b) };
+  }
+  const named = [...n.matchAll(new RegExp(`\\b${monthWord}\\s+(20\\d{2})\\b`, 'g'))];
+  if (named.length === 1 && !new RegExp(`\\b${monthWord}\\b.*\\b${monthWord}\\b`).test(n.replace(named[0][0], ''))) {
+    return { months: [`${named[0][2]}-${String(MONTHS.indexOf(named[0][1].slice(0, 3)) + 1).padStart(2, '0')}`] };
+  }
+  const year = n.match(/\b(?:SAHHO|CONTRIBUTION|SHARE|FOR|YEAR)\s+(20\d{2})\b/);
+  if (year && !named.length) return { months: months(`${year[1]}-01`, `${year[1]}-12`) };
+  const mentions = new RegExp(`\\b${monthWord}\\b|\\bMONTHS?\\b|\\bARREARS?\\b|\\bADVANCE\\b`).test(n);
+  void receiptDate;
+  return { ambiguous: mentions || named.length > 1 || iso.length > 0 };
+}
+
+function history(s: State, memberId: string, excludeReceipt?: string) {
+  const allocs = s.allocations.filter(a => a.memberId === memberId && a.receiptId !== excludeReceipt && allocationActive(s, a));
+  return {
+    hasJoining: allocs.some(a => a.kind === 'joining'),
+    hasAny: allocs.length > 0 || s.receipts.some(r => r.id !== excludeReceipt && r.memberId === memberId && r.status === 'confirmed' && r.credit > 0),
+  };
+}
+
+/** Fill months in order: complete partial months first, then later months, up to the advance limit. */
+function oldestUnpaid(s: State, m: Member, amount: number, receiptDate: string): { lines: PlanLine[]; left: number } {
+  const lines: PlanLine[] = [];
+  let left = amount;
+  const until = addMonth(monthOf(receiptDate), s.settings.advanceMonths);
+  for (const month of months(m.start!, until)) {
+    if (left <= 0) break;
+    const need = Math.max(0, due(s, m, month) - paid(s, m.id, month));
+    const take = Math.min(left, need);
+    if (take > 0) { lines.push({ month, amount: take, kind: 'regular', note: 'Oldest unpaid first, then advance' }); left -= take; }
+  }
+  return { lines, left };
+}
+
+export function planAllocation(
+  s: State, r: Receipt, memberId: string,
+  opts: { months?: string[]; ignorePeriod?: boolean; amount?: number; treatAsJoining?: boolean } = {},
+): Plan {
+  const m = s.members.find(x => x.id === memberId);
+  const amount = opts.amount ?? available(s, r);
+  const base = { memberId, lines: [] as PlanLine[], unapplied: amount, joining: false, method: '' };
+  if (!m) return { ...base, problem: 'Member not found.' };
+  if (!r.credit) return { ...base, problem: 'Only credits can be allocated to contributions.' };
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > available(s, r)) return { ...base, problem: 'Allocation exceeds the unallocated amount of this receipt.' };
+
+  const { hasJoining, hasAny } = history(s, memberId, r.id);
+  const joiningAmount = s.settings.joiningAmount;
+  if (!hasJoining && (opts.treatAsJoining || (!hasAny && amount === joiningAmount))) {
+    if (amount !== joiningAmount) return { ...base, problem: `The joining contribution is ${money(joiningAmount)}; this amount differs.` };
+    const month = m.joiningMonth ?? monthOf(r.date);
+    return {
+      memberId, joining: true, unapplied: 0, method: 'Initial joining contribution',
+      lines: [{ month, amount, kind: 'joining', note: `Initial joining contribution (${money(joiningAmount)}), kept whole` }],
+    };
+  }
+  if (!hasAny && !hasJoining && !opts.months) {
+    return { ...base, problem: `First payment from this member is ${money(amount)}, not the ${money(joiningAmount)} joining contribution. Confirm how to treat it.` };
+  }
+  if (!m.start) return { ...base, problem: `Regular contribution start month for ${m.name} is not confirmed.` };
+
+  let problem: string | undefined;
+  let target = opts.months;
+  let method = opts.months ? 'Months chosen by treasurer' : '';
+  if (!target && !opts.ignorePeriod) {
+    const ex = explicitMonths(r.narration, r.date);
+    if (ex.ambiguous) problem = 'The narration mentions a period that could not be read reliably. Proposed: oldest unpaid months.';
+    else if (ex.months) {
+      const need = ex.months.reduce((v, x) => v + Math.max(0, due(s, m, x) - paid(s, memberId, x)), 0);
+      if (ex.months.some(x => x < m.start! || due(s, m, x) === 0) || need !== amount) {
+        problem = `Narration names ${ex.months.length === 1 ? monthLabel(ex.months[0]) : `${monthLabel(ex.months[0])}–${monthLabel(ex.months.at(-1)!)}`} but that does not match ${money(amount)} and existing allocations. Proposed: oldest unpaid months.`;
+      } else { target = ex.months; method = 'Period stated in narration'; }
+    }
+  }
+  if (target) {
+    const lines: PlanLine[] = [];
+    let left = amount;
+    for (const month of target) {
+      const take = Math.min(left, Math.max(0, due(s, m, month) - paid(s, memberId, month)));
+      if (take > 0) { lines.push({ month, amount: take, kind: 'regular', note: method }); left -= take; }
+    }
+    return { memberId, lines, unapplied: left, joining: false, method, problem };
+  }
+  const { lines, left } = oldestUnpaid(s, m, amount, r.date);
+  return { memberId, lines, unapplied: left, joining: false, method: 'Oldest unpaid months first, then advance', problem };
+}
+
+export function commitPlan(s: State, r: Receipt, plan: Plan) {
+  const total = plan.lines.reduce((v, l) => v + l.amount, 0);
+  if (total > available(s, r)) throw Error('Allocation exceeds available receipt credit.');
+  const m = s.members.find(x => x.id === plan.memberId)!;
+  for (const l of plan.lines) {
+    s.allocations.push({ id: id(), receiptId: r.id, memberId: plan.memberId, month: l.month, amount: l.amount, kind: l.kind, received: r.date, legacy: false, note: l.note });
+  }
+  if (plan.joining) {
+    m.joined = r.date;
+    m.joiningMonth = plan.lines[0].month;
+    r.category = 'Joining contribution';
+  } else r.category = 'Member contribution';
+  r.memberId = plan.memberId;
+  r.reason = `${r.reason ? r.reason + '. ' : ''}${plan.method}${plan.unapplied ? `; ${money(plan.unapplied)} kept as unapplied credit` : ''}`;
+}
+
+// ---------- Automatic processing ----------
+
+/** Classify and, where safe, allocate a new bank transaction. Anything uncertain goes to review. */
+export function processReceipt(s: State, r: Receipt) {
+  r.candidates = [];
+  r.memberId = undefined;
+  const pattern = patternCategory(r);
+  if (pattern === 'Refund / reversal') {
+    const original = reversalCandidates(s, r);
+    const strong = referencedOriginals(s, r);
+    r.category = 'Refund / reversal';
+    r.status = 'review';
+    r.candidates = original.slice(0, 10).map(x => x.id);
+    r.reason = strong.length === 1
+      ? `Reversal of ${strong[0].date} ${money(strong[0].credit || strong[0].debit)} (same bank reference): confirm to reverse its allocations`
+      : original.length ? 'Reversal/refund: choose the original transaction to reverse its allocations' : 'Refund or reversal without a clear original transaction';
+    return;
+  }
+  if (r.credit > 0) {
+    if (pattern === 'Bank interest') { r.category = pattern; r.status = 'confirmed'; r.reason = 'Recognised bank interest'; return; }
+    const match = matchMember(s, r);
+    r.candidates = match.candidates;
+    r.matchedRules = match.rules;
+    r.reason = match.reason;
+    if (!match.memberId) { r.category = 'Unclassified'; r.status = 'review'; return; }
+    const plan = planAllocation(s, r, match.memberId);
+    if (plan.problem) { r.category = 'Member contribution'; r.status = 'review'; r.reason = `${match.reason}. ${plan.problem}`; return; }
+    r.status = 'confirmed';
+    commitPlan(s, r, plan);
+    return;
+  }
+  // Debits
+  const rule = matchCategory(s, r);
+  if (rule.category && rule.validated) {
+    r.category = rule.category; r.status = 'confirmed'; r.matchedRules = rule.rules;
+    r.reason = 'Category from validated payee rule'; return;
+  }
+  if (pattern === 'Bank charges' || pattern === 'Phone recharge') { r.category = pattern; r.status = 'confirmed'; r.reason = 'Recognised bank transaction pattern'; return; }
+  r.category = rule.category ?? pattern ?? 'Unclassified';
+  r.status = 'review';
+  const memberNamed = s.members.some(m => m.name.length >= 4 && norm(r.narration).includes(m.name));
+  r.reason = `Confirm expenditure category${rule.category ? ' (suggested from similar payments)' : ''}` +
+    (memberNamed ? '. A member is named in this debit — it may be a reimbursement, not a contribution' : '');
+}
+
+// ---------- Review decisions (all audited) ----------
+
+function removeReceiptAllocations(s: State, r: Receipt) {
+  const removed = s.allocations.filter(a => a.receiptId === r.id && !a.legacy);
+  const legacyLinked = s.allocations.filter(a => a.receiptId === r.id && a.legacy);
+  if (legacyLinked.length) throw Error('This receipt is linked to preserved workbook allocations. Unlink those first.');
+  s.allocations = s.allocations.filter(a => !removed.includes(a));
+  return removed;
+}
+
+export interface Decision {
+  memberId?: string;
+  category: Category;
+  months?: string[];
+  treatAsJoining?: boolean;
+  ruleToken?: string;
+  note?: string;
+}
+
+/** Approve or correct a transaction. Replaces any earlier automatic allocation of this receipt. */
+export function decide(s: State, receiptId: string, d: Decision) {
+  const r = s.receipts.find(x => x.id === receiptId);
+  if (!r) throw Error('Transaction not found.');
+  const before = { receipt: structuredClone(r), allocations: s.allocations.filter(a => a.receiptId === r.id) };
+  if (contributionCategories.includes(d.category)) {
+    if (!r.credit) throw Error('Only credits can be contributions.');
+    if (!d.memberId) throw Error('Choose the member this payment is for.');
+  }
+  if (d.ruleToken) {
+    const problem = validateToken(d.ruleToken);
+    if (problem) throw Error(problem);
+  }
+  const removed = removeReceiptAllocations(s, r);
+  r.duplicateOf = undefined;
+  r.memberId = undefined;
+  r.category = d.category;
+  r.reason = `Confirmed by treasurer${d.note ? `: ${d.note}` : ''}`;
+  if (contributionCategories.includes(d.category)) {
+    const plan = planAllocation(s, r, d.memberId!, { months: d.months, ignorePeriod: !d.months, treatAsJoining: d.treatAsJoining || d.category === 'Joining contribution' });
+    if (plan.problem) {
+      s.allocations.push(...removed);
+      Object.assign(r, before.receipt);
+      throw Error(plan.problem);
+    }
+    commitPlan(s, r, plan);
+  } else if (d.memberId && r.credit) r.memberId = d.memberId;
+  r.status = 'confirmed';
+  if (d.ruleToken) {
+    const token = norm(d.ruleToken);
+    const target = contributionCategories.includes(d.category) ? { memberId: d.memberId } : { category: d.category };
+    s.rules.push({ id: id(), token, ...target, enabled: true, validated: true, evidence: [r.id], origin: 'manual', note: 'Saved from a review decision' });
+  }
+  audit(s, removed.length ? 'Transaction corrected' : 'Review approved',
+    `${r.date} ${money(r.credit || r.debit)} → ${d.category}${d.memberId ? ` / ${s.members.find(m => m.id === d.memberId)?.name}` : ''}`,
+    before, { receipt: structuredClone(r), allocations: s.allocations.filter(a => a.receiptId === r.id) });
+}
+
+export function markDuplicate(s: State, receiptId: string, originalId?: string) {
+  const r = s.receipts.find(x => x.id === receiptId);
+  if (!r) throw Error('Transaction not found.');
+  if (s.allocations.some(a => a.receiptId === r.id)) throw Error('Remove allocations before marking as duplicate.');
+  r.status = 'duplicate';
+  r.duplicateOf = originalId ?? r.duplicateOf;
+  r.reason = 'Confirmed duplicate; excluded from totals';
+  audit(s, 'Marked duplicate', `${r.date} ${money(r.credit || r.debit)} duplicate of ${r.duplicateOf ?? 'earlier record'}`);
+}
+
+export function notDuplicate(s: State, receiptId: string) {
+  const r = s.receipts.find(x => x.id === receiptId);
+  if (!r) throw Error('Transaction not found.');
+  const was = r.duplicateOf;
+  r.duplicateOf = undefined;
+  processReceipt(s, r);
+  audit(s, 'Kept as separate transaction', `${r.date} ${money(r.credit || r.debit)} is not a duplicate of ${was}`);
+}
+
+const longNumbers = (text: string) => new Set(text.match(/\d{9,}/g) ?? []);
+
+/** Originals whose bank reference appears in the reversal (strong evidence). */
+export function referencedOriginals(s: State, r: Receipt) {
+  const refs = longNumbers(`${r.narration} ${r.reference}`);
+  return reversalCandidates(s, r).filter(o => [...longNumbers(`${o.narration} ${o.reference}`)].some(x => refs.has(x)));
+}
+
+/** Possible originals for a refund/reversal, best first: shared bank reference, same sender, nearest date. */
+export function reversalCandidates(s: State, r: Receipt) {
+  const refs = longNumbers(`${r.narration} ${r.reference}`);
+  const text = norm(r.narration);
+  const score = (o: Receipt) =>
+    ([...longNumbers(`${o.narration} ${o.reference}`)].some(x => refs.has(x)) ? 1000 : 0) +
+    (o.sender && text.includes(o.sender) ? 100 : 0) -
+    (Date.parse(r.date) - Date.parse(o.date)) / 86400000;
+  return s.receipts.filter(o =>
+    o.id !== r.id && o.status === 'confirmed' && !o.reversalOf &&
+    o.credit === r.debit && o.debit === r.credit && o.date <= r.date &&
+    !s.receipts.some(x => x.reversalOf === o.id) &&
+    (Date.parse(r.date) - Date.parse(o.date)) / 86400000 <= 90)
+    .sort((a, b) => score(b) - score(a));
+}
+
+/** Link a refund/reversal to its original and reverse the original's allocations (records are kept). */
+export function linkReversal(s: State, reversalId: string, originalId: string) {
+  const r = s.receipts.find(x => x.id === reversalId), o = s.receipts.find(x => x.id === originalId);
+  if (!r || !o || o.id === r.id || o.status !== 'confirmed' || r.debit !== o.credit || r.credit !== o.debit || r.date < o.date || s.receipts.some(x => x.reversalOf === o.id)) {
+    throw Error('Choose an unreversed, confirmed original of the same amount and opposite direction. Partial refunds need a manual allocation adjustment.');
+  }
+  r.reversalOf = o.id;
+  r.category = 'Refund / reversal';
+  r.status = 'confirmed';
+  r.memberId = o.memberId;
+  r.reason = `Reverses ${o.date} ${money(o.credit || o.debit)}`;
+  for (const a of s.allocations.filter(a => a.receiptId === o.id)) a.reversedBy = r.id;
+  audit(s, 'Reversal confirmed', `${r.date} reverses ${o.date} ${o.narration.slice(0, 60)}`);
+}
+
+export function createMember(s: State, input: { name: string; aliases?: string[]; start?: string; joiningMonth?: string; notes?: string }) {
+  const name = norm(input.name);
+  if (name.length < 2) throw Error('Enter the member name.');
+  if (s.members.some(m => m.name === name)) throw Error('A member with this name already exists. Use aliases to distinguish people with similar names.');
+  if (input.start && !/^\d{4}-(0[1-9]|1[0-2])$/.test(input.start)) throw Error('Start month must be YYYY-MM.');
+  const m: Member = { id: id(), name, aliases: (input.aliases ?? []).map(norm).filter(Boolean), notes: input.notes ?? '', start: input.start, joiningMonth: input.joiningMonth, exceptions: [] };
+  s.members.push(m);
+  audit(s, 'Member created', `${m.name}${m.start ? `, regular contributions from ${m.start}` : ''}`);
+  return m;
+}
+
+export function updateMember(s: State, memberId: string, patch: Partial<Member>) {
+  const m = s.members.find(x => x.id === memberId);
+  if (!m) throw Error('Member not found.');
+  const before = structuredClone(m);
+  Object.assign(m, patch);
+  if (patch.start) {
+    m.suggestedStart = undefined;
+    for (const i of s.issues.filter(i => i.memberId === m.id && i.kind === 'Contribution start month' && !i.resolved)) {
+      i.resolved = true; i.resolution = `Start month confirmed as ${patch.start}`;
+    }
+  }
+  audit(s, 'Member updated', m.name, before, structuredClone(m));
+}
+
+export function resolveIssue(s: State, issueId: string, resolution: string) {
+  const i = s.issues.find(x => x.id === issueId);
+  if (!i) throw Error('Item not found.');
+  i.resolved = true;
+  i.resolution = resolution;
+  audit(s, 'Issue resolved', `${i.kind}: ${resolution}`);
+}
+
+/** Link a preserved workbook allocation to a bank receipt (manual reconciliation). */
+export function linkLegacy(s: State, allocationId: string, receiptId: string) {
+  const a = s.allocations.find(x => x.id === allocationId), r = s.receipts.find(x => x.id === receiptId);
+  if (!a || !r || a.receiptId) throw Error('Choose an unlinked historical allocation and a receipt.');
+  if (a.amount > available(s, r)) throw Error('The receipt does not have enough unallocated credit.');
+  a.receiptId = r.id;
+  a.legacy = false;
+  if (r.memberId && r.memberId !== a.memberId) a.note = `${a.note} Paid by the sender of a receipt assigned to another member.`.trim();
+  for (const i of s.issues.filter(i => i.allocationId === a.id && !i.resolved)) { i.resolved = true; i.resolution = `Linked to receipt ${r.date}`; }
+  audit(s, 'Historical allocation linked', `${a.month} ${money(a.amount)} → receipt ${r.date} ${money(r.credit)}`);
+}
