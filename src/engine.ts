@@ -1,5 +1,5 @@
 // Obligations, allocation and review decisions. Pure functions over State (no UI).
-import { Allocation, Category, Member, Receipt, State, audit, contributionCategories, id, money, monthLabel, norm, today } from './model';
+import { Allocation, Category, Member, Receipt, State, audit, contributionCategories, id, memberName, money, monthLabel, norm, today } from './model';
 import { matchCategory, matchMember, patternCategory, validateToken } from './matching';
 
 export function addMonth(month: string, n = 1) {
@@ -331,9 +331,66 @@ export function decide(s: State, receiptId: string, d: Decision) {
     const target = contributionCategories.includes(d.category) ? { memberId: d.memberId } : { category: d.category };
     s.rules.push({ id: id(), token, ...target, enabled: true, validated: true, evidence: [r.id], origin: 'manual', note: 'Saved from a review decision' });
   }
+  const leftover = detachedFrom(s, r.id);
+  for (const a of leftover) {
+    a.unlinkedFrom = undefined;
+    s.issues.push({ id: id(), kind: 'Unmatched historical allocation', memberId: a.memberId, allocationId: a.id, source: a.source, resolved: false,
+      reason: `${memberName(s, a.memberId)} ${a.month}: workbook allocation of ${money(a.amount)} was unlinked from the ${r.date} transaction when it was corrected. Kept as a workbook record without a bank receipt.` });
+  }
   audit(s, removed.length ? 'Transaction corrected' : 'Review approved',
     `${r.date} ${money(r.credit || r.debit)} → ${d.category}${d.memberId ? ` / ${s.members.find(m => m.id === d.memberId)?.name}` : ''}`,
     before, { receipt: structuredClone(r), allocations: s.allocations.filter(a => a.receiptId === r.id) });
+}
+
+const isWorkbook = (a: Allocation) => !!a.source?.sheet;
+
+/**
+ * Send a confirmed transaction back to review so it can be corrected. Allocations the app made from it are
+ * removed; workbook allocations linked to it become unlinked workbook records again (never deleted here).
+ * Bank fields are untouched.
+ */
+export function reopenReceipt(s: State, receiptId: string) {
+  const r = s.receipts.find(x => x.id === receiptId);
+  if (!r) throw Error('Transaction not found.');
+  if (r.status !== 'confirmed') throw Error('Only confirmed transactions can be reopened.');
+  if (r.reversalOf || s.receipts.some(x => x.reversalOf === r.id)) throw Error('This transaction is part of a linked reversal and cannot be reopened.');
+  const linked = s.allocations.filter(a => a.receiptId === r.id);
+  const before = { receipt: structuredClone(r), allocations: structuredClone(linked) };
+  const detached = linked.filter(isWorkbook);
+  s.allocations = s.allocations.filter(a => a.receiptId !== r.id || isWorkbook(a));
+  for (const a of detached) { a.receiptId = undefined; a.legacy = true; a.unlinkedFrom = r.id; }
+  r.status = 'review';
+  r.reason = `Reopened by treasurer (was ${r.category}${r.memberId ? ` / ${memberName(s, r.memberId)}` : ''}${linked.length ? `, ${linked.length} month allocation(s)` : ''})`;
+  audit(s, 'Transaction reopened', `${r.date} ${money(r.credit || r.debit)} sent back to review`, before,
+    { receipt: structuredClone(r), allocations: structuredClone(detached) });
+  return { removed: linked.length - detached.length, detached: detached.length };
+}
+
+/** Workbook allocations detached from this receipt when it was reopened. */
+export const detachedFrom = (s: State, receiptId: string) => s.allocations.filter(a => a.unlinkedFrom === receiptId);
+
+/** Undo the detachment: link the workbook months back to the receipt and confirm it as before. */
+export function relinkDetached(s: State, receiptId: string) {
+  const r = s.receipts.find(x => x.id === receiptId);
+  const list = detachedFrom(s, receiptId);
+  if (!r || !list.length) throw Error('There are no workbook months to link back.');
+  const members = [...new Set(list.map(a => a.memberId))];
+  if (list.reduce((v, a) => v + a.amount, 0) > r.credit) throw Error('The workbook months exceed this transaction amount.');
+  for (const a of list) { a.receiptId = r.id; a.legacy = false; a.unlinkedFrom = undefined; }
+  r.status = 'confirmed';
+  r.memberId = members.length === 1 ? members[0] : r.memberId;
+  r.category = list.some(a => a.kind === 'joining') ? 'Joining contribution' : 'Member contribution';
+  r.reason = 'Workbook months linked back by treasurer';
+  audit(s, 'Workbook months linked back', `${r.date} ${money(r.credit)} → ${list.map(a => a.month).sort().join(', ')}`);
+}
+
+/** Delete the workbook months detached from a reopened receipt (the archived workbook cells are kept). */
+export function removeDetached(s: State, receiptId: string) {
+  const list = detachedFrom(s, receiptId);
+  if (!list.length) throw Error('There are no workbook months to remove.');
+  s.allocations = s.allocations.filter(a => !list.includes(a));
+  for (const i of s.issues.filter(i => i.allocationId && list.some(a => a.id === i.allocationId) && !i.resolved)) { i.resolved = true; i.resolution = 'Workbook allocation removed'; }
+  audit(s, 'Workbook months removed', `${list.map(a => `${memberName(s, a.memberId)} ${a.month} ${money(a.amount)}`).join('; ')} (unlinked from a reopened transaction)`, list);
 }
 
 export function markDuplicate(s: State, receiptId: string, originalId?: string) {

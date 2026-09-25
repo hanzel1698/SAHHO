@@ -85,6 +85,7 @@ export interface Allocation {
   legacy: boolean;       // true = workbook allocation not linked to a bank receipt (never bank income)
   note: string;
   reversedBy?: string;
+  unlinkedFrom?: string; // workbook allocation detached when this receipt was reopened for review
 }
 
 export interface Rule {

@@ -105,6 +105,7 @@ table.grid th.sticky { white-space: nowrap; font-weight: 600; }
 .file-button { position: relative; display: inline-block; border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; color: var(--ink); font-size: 14px; background: #fff; cursor: pointer; }
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .confirm { background: var(--warn-bg); padding: 10px; border-radius: 6px; margin-top: 10px; }
+.confirm.reopen { position: sticky; left: 0; max-width: min(720px, calc(100vw - 90px)); margin-top: 0; }
 details { margin: 8px 0; }
 .rule-test { background: var(--muted-bg); padding: 8px; border-radius: 6px; }
 @media (max-width: 860px) {

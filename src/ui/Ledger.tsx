@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
 import type { ScreenProps } from '../App';
-import { Receipt, categories, memberName, money, norm } from '../model';
+import { Receipt, categories, memberName, money, monthLabel, norm } from '../model';
+import { reopenReceipt } from '../engine';
 import { sortRows } from '../reports';
-import { Badge, MemberSelect, download } from './common';
+import { Badge, ErrorLine, MemberSelect, download, useAsync } from './common';
 import { toCSV } from '../reports';
 
-export function Ledger({ s, go }: ScreenProps) {
+export function Ledger({ s, go, store }: ScreenProps) {
+  const [reopen, setReopen] = useState<string>();
+  const { busy, error, run } = useAsync();
   const [f, setF] = useState({ q: '', from: '', to: '', min: '', max: '', member: '', category: '', status: '', batch: '', dir: '' });
   const [limit, setLimit] = useState(200);
   const rows = useMemo(() => {
@@ -43,7 +46,7 @@ export function Ledger({ s, go }: ScreenProps) {
         <table>
           <thead><tr><th>Date</th><th>Narration</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Category</th><th>Member / months</th><th>Status</th></tr></thead>
           <tbody>
-            {rows.slice(0, limit).map(r => (
+            {rows.slice(0, limit).flatMap(r => [
               <tr key={r.id}>
                 <td>{r.date}{r.valueDate !== r.date && <div className="dim small">val {r.valueDate}</div>}</td>
                 <td className="narr">{r.narration}{(r.remarks || r.type) && <div className="dim small">{[r.type, r.remarks].filter(Boolean).join(' · ')}</div>}</td>
@@ -52,14 +55,37 @@ export function Ledger({ s, go }: ScreenProps) {
                 <td className="num dim">{money(r.balance)}</td>
                 <td>{r.category}{r.reversalOf && <div className="small">reverses {s.receipts.find(x => x.id === r.reversalOf)?.date}</div>}{s.receipts.some(x => x.reversalOf === r.id) && <div><Badge tone="bad">reversed</Badge></div>}</td>
                 <td>{memberName(s, r.memberId)}{r.sender && r.memberId && norm(r.sender) !== memberName(s, r.memberId) && <div className="dim small">paid by {r.sender}</div>}<div className="dim small">{allocText(s, r)}</div></td>
-                <td>{r.status === 'confirmed' ? <Badge tone="good">confirmed</Badge> : r.status === 'review' ? <button className="badge warn" onClick={() => go('review')}>review</button> : <Badge tone="muted">duplicate</Badge>}<div className="dim small" title={r.reason}>{r.reason.slice(0, 70)}</div></td>
-              </tr>
-            ))}
+                <td>{r.status === 'confirmed' ? <Badge tone="good">confirmed</Badge> : r.status === 'review' ? <button className="badge warn" onClick={() => go('review')}>review</button> : <Badge tone="muted">duplicate</Badge>}<div className="dim small" title={r.reason}>{r.reason.slice(0, 70)}</div>
+                  {r.status === 'confirmed' && <button className="link small" onClick={() => setReopen(reopen === r.id ? undefined : r.id)}>Edit…</button>}</td>
+              </tr>,
+              reopen === r.id && <tr key={r.id + '-reopen'}><td colSpan={8}><ReopenPanel r={r} s={s} busy={busy} error={error} onCancel={() => setReopen(undefined)}
+                onReopen={() => void run(async () => { await store.commit(d => { reopenReceipt(d, r.id); }); setReopen(undefined); go('review'); })} /></td></tr>,
+            ])}
           </tbody>
         </table>
       </div>
       {rows.length > limit && <button className="link" onClick={() => setLimit(limit + 500)}>Show more</button>}
     </section>
+  );
+}
+
+function ReopenPanel({ r, s, busy, error, onReopen, onCancel }: { r: Receipt; s: ScreenProps['s']; busy: boolean; error?: string; onReopen: () => void; onCancel: () => void }) {
+  const list = s.allocations.filter(a => a.receiptId === r.id).sort((a, b) => a.month.localeCompare(b.month));
+  const workbook = list.filter(a => a.source?.sheet);
+  const blocked = !!r.reversalOf || s.receipts.some(x => x.reversalOf === r.id);
+  return (
+    <div className="confirm reopen">
+      <b>Edit this transaction</b>
+      {blocked ? <p>This transaction is part of a linked reversal, so it can’t be reopened.</p> : <>
+        <p>Reopening sends it back to <b>Needs your review</b>, where you choose the category, member and months again. The bank details (date, amount, narration) don’t change.</p>
+        {list.length > 0 && <p>Currently: {r.category}{r.memberId ? ` · ${memberName(s, r.memberId)}` : ''} · {list.map(a => `${monthLabel(a.month)}${a.kind === 'joining' ? ' (joining)' : ''} ${money(a.amount)}`).join(', ')}. These month allocations will be removed{workbook.length ? `; the ${workbook.length} that came from the workbook are kept as unlinked workbook records, and you can link them back or remove them from the review card` : ''}.</p>}
+      </>}
+      <div className="actions">
+        {!blocked && <button className="primary" disabled={busy} onClick={onReopen}>Reopen for review</button>}
+        <button disabled={busy} onClick={onCancel}>Cancel</button>
+      </div>
+      <ErrorLine error={error} />
+    </div>
   );
 }
 

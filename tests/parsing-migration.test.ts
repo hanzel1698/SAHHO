@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 import 'fake-indexeddb/auto';
-import { emptyState } from '../src/model';
+import { State, emptyState } from '../src/model';
 import { amount, date, emptyMapping, parseCSV, parseRows, readStatement, stageStatement, tableFromRows } from '../src/importer';
-import { explicitMonths, onRoster } from '../src/engine';
+import { decide, detachedFrom, explicitMonths, onRoster, relinkDetached, removeDetached, reopenReceipt } from '../src/engine';
 import { signals } from '../src/matching';
 import { migrateWorkbook } from '../src/migration';
 import { ConflictError, load, save, undoImport, undoPreview, upgrade, validate } from '../src/storage';
 import { dashboard } from '../src/reports';
 import { demoState, demoStatementCSV } from '../src/demo';
+import { fixture } from './helpers';
 
 describe('parsing', () => {
   it('reads amounts as integer paise', () => {
@@ -187,6 +188,77 @@ function rosterWorkbook() {
   sheet(2025, [['ASHA'], ['ELLA (200-2025)']]);
   return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
 }
+
+describe('editing a linked transaction', () => {
+  const base = migrateWorkbook(emptyState(), fictionalWorkbook(), 'fictional.xlsx', 'edit');
+  const r600 = (s: State) => s.receipts.find(x => x.credit === 60000)!;
+  const months = (s: State, id: string) => s.allocations.filter(a => a.receiptId === id).map(a => a.month).sort();
+
+  it('reopens a confirmed receipt: workbook months become unlinked records, nothing is deleted', () => {
+    const s = structuredClone(base);
+    const r = r600(s);
+    const count = s.allocations.length;
+    expect(reopenReceipt(s, r.id)).toEqual({ removed: 0, detached: 3 });
+    validate(s);
+    expect(r.status).toBe('review');
+    expect(months(s, r.id)).toEqual([]);
+    expect(s.allocations).toHaveLength(count);
+    expect(detachedFrom(s, r.id).map(a => a.month).sort()).toEqual(['2024-02', '2024-03', '2024-04']);
+    expect(s.audit.at(-1)!.action).toBe('Transaction reopened');
+  });
+
+  it('links the workbook months back, restoring the original state', () => {
+    const s = structuredClone(base);
+    const r = r600(s);
+    reopenReceipt(s, r.id);
+    relinkDetached(s, r.id);
+    validate(s);
+    expect(r.status).toBe('confirmed');
+    expect(months(s, r.id)).toEqual(['2024-02', '2024-03', '2024-04']);
+    expect(detachedFrom(s, r.id)).toEqual([]);
+  });
+
+  it('can remove the workbook months and re-assign the payment to a different member', () => {
+    const s = structuredClone(base);
+    const r = r600(s);
+    reopenReceipt(s, r.id);
+    removeDetached(s, r.id);
+    const benny = s.members.find(m => m.name === 'BENNY')!;
+    benny.start = '2024-02';
+    decide(s, r.id, { memberId: benny.id, category: 'Member contribution', months: ['2024-04', '2024-05', '2024-06'] });
+    validate(s);
+    expect(s.allocations.filter(a => a.receiptId === r.id).every(a => a.memberId === benny.id)).toBe(true);
+    expect(months(s, r.id)).toEqual(['2024-04', '2024-05', '2024-06']);
+  });
+
+  it('flags workbook months left unlinked when the receipt is corrected without them', () => {
+    const s = structuredClone(base);
+    const r = r600(s);
+    reopenReceipt(s, r.id);
+    decide(s, r.id, { category: 'Other donation' });
+    validate(s);
+    expect(detachedFrom(s, r.id)).toEqual([]);
+    expect(s.issues.filter(i => !i.resolved && /unlinked from the 2024-02-05 transaction/.test(i.reason))).toHaveLength(3);
+  });
+
+  it('removes allocations the app made from a bank receipt so it can be allocated again', () => {
+    const s = fixture();
+    const r = s.receipts.find(x => x.credit === 40000)!;
+    expect(s.allocations.filter(a => a.receiptId === r.id)).toHaveLength(2);
+    expect(reopenReceipt(s, r.id)).toEqual({ removed: 2, detached: 0 });
+    validate(s);
+    expect(s.allocations.filter(a => a.receiptId === r.id)).toHaveLength(0);
+    decide(s, r.id, { memberId: r.memberId, category: 'Member contribution', months: ['2025-05', '2025-06'] });
+    expect(months(s, r.id)).toEqual(['2025-05', '2025-06']);
+  });
+
+  it('refuses receipts that are not confirmed or are part of a reversal', () => {
+    const s = structuredClone(base);
+    const r = r600(s);
+    reopenReceipt(s, r.id);
+    expect(() => reopenReceipt(s, r.id)).toThrow(/Only confirmed/);
+  });
+});
 
 describe('year-sheet rosters', () => {
   const s = migrateWorkbook(emptyState(), rosterWorkbook(), 'roster.xlsx', 'roster');

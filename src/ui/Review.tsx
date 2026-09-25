@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ScreenProps } from '../App';
 import { Category, Issue, Receipt, State, categories, contributionCategories, memberName, money, monthLabel } from '../model';
-import { createMember, decide, linkReversal, markDuplicate, months as monthRange, notDuplicate, planAllocation, referencedOriginals, resolveIssue, reversalCandidates, updateMember } from '../engine';
+import { createMember, decide, detachedFrom, linkReversal, relinkDetached, removeDetached, markDuplicate, months as monthRange, notDuplicate, planAllocation, referencedOriginals, resolveIssue, reversalCandidates, updateMember } from '../engine';
 import { signals } from '../matching';
 import { Badge, ErrorLine, MemberSelect, useAsync } from './common';
 
@@ -42,6 +42,7 @@ export function Review({ s, store }: ScreenProps) {
 function ReceiptCard({ r, s, store, onSkip }: { r: Receipt; s: State; store: ScreenProps['store']; onSkip: () => void }) {
   const { busy, error, run } = useAsync();
   const original = r.duplicateOf ? s.receipts.find(x => x.id === r.duplicateOf) : undefined;
+  const detached = detachedFrom(s, r.id);
   const reversal = r.category === 'Refund / reversal' && !r.duplicateOf;
   const [memberId, setMemberId] = useState(r.memberId ?? r.candidates.find(c => s.members.some(m => m.id === c)));
   const [category, setCategory] = useState<Category>(r.credit ? (r.category === 'Unclassified' || r.category === 'Refund / reversal' ? 'Member contribution' : r.category) : (r.category === 'Unclassified' ? 'Other expense' : r.category));
@@ -76,6 +77,15 @@ function ReceiptCard({ r, s, store, onSkip }: { r: Receipt; s: State; store: Scr
         <Badge tone="warn">{r.reason}</Badge>
       </div>
       <div className="narration">{r.narration}</div>
+      {detached.length > 0 && (
+        <div className="confirm">
+          Before it was reopened, this transaction was linked to workbook months: {detached.map(a => `${memberName(s, a.memberId)} ${monthLabel(a.month)} ${money(a.amount)}`).join(', ')}. They are kept as workbook records without a bank receipt, so approving below adds to them rather than replacing them.
+          <div className="actions">
+            <button disabled={busy} onClick={() => void run(() => store.commit(d => relinkDetached(d, r.id)))}>Link them back (undo reopen)</button>
+            <button disabled={busy} onClick={() => void run(() => store.commit(d => removeDetached(d, r.id)))}>Remove these workbook months</button>
+          </div>
+        </div>
+      )}
       <div className="dim small">{r.source.file}{r.source.sheet ? ` · ${r.source.sheet}` : ''} · row {r.source.row}{r.sender && <> · sender shown by bank: <b>{r.sender}</b></>}{r.label && <> · workbook label: <b>{r.label}</b></>}</div>
 
       {original ? (
