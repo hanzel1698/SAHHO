@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ScreenProps } from '../App';
 import { Category, Issue, Receipt, State, categories, contributionCategories, memberName, money, monthLabel } from '../model';
-import { createMember, decide, detachedFrom, linkReversal, relinkDetached, removeDetached, markDuplicate, months as monthRange, notDuplicate, planAllocation, referencedOriginals, resolveIssue, reversalCandidates, updateMember } from '../engine';
+import { createMember, decide, detachedFrom, linkReversal, linkWorkbookMonths, relinkDetached, removeDetached, unlinkedWorkbook, markDuplicate, months as monthRange, notDuplicate, planAllocation, referencedOriginals, resolveIssue, reversalCandidates, updateMember } from '../engine';
 import { signals } from '../matching';
 import { Badge, ErrorLine, MemberSelect, useAsync } from './common';
 
@@ -149,6 +149,7 @@ function ReceiptCard({ r, s, store, onSkip }: { r: Receipt; s: State; store: Scr
               </div>
             </div>
           )}
+          {r.credit > 0 && contributionCategories.includes(category) && memberId && !newMember && <WorkbookLink key={memberId} r={r} s={s} memberId={memberId} busy={busy} onLink={ids => void run(() => store.commit(d => linkWorkbookMonths(d, r.id, ids)))} />}
           {r.debit > 0 && r.candidates.length === 0 && s.members.some(m => r.narration.toUpperCase().includes(m.name)) && <p className="note">A member’s name appears in this debit. It may be a reimbursement or charity paid through them — not a contribution.</p>}
           <div className="actions">
             <button className="primary" disabled={busy || (contributionCategories.includes(category) && !memberId && !newMember?.name)} onClick={() => void approve()}>Approve</button>
@@ -159,6 +160,34 @@ function ReceiptCard({ r, s, store, onSkip }: { r: Receipt; s: State; store: Scr
         </div>
       )}
       <ErrorLine error={error} />
+    </div>
+  );
+}
+
+/** Workbook months of the member with no bank payment behind them — link instead of allocating twice. */
+function WorkbookLink({ r, s, memberId, busy, onLink }: { r: Receipt; s: State; memberId: string; busy: boolean; onLink: (ids: string[]) => void }) {
+  const list = useMemo(() => unlinkedWorkbook(s, memberId), [s, memberId]);
+  const near = (a: { received?: string }) => !!a.received && Math.abs(Date.parse(a.received) - Date.parse(r.date)) <= 3 * 86400000;
+  const [picked, setPicked] = useState<Set<string>>(() => {
+    const guess = list.filter(near);
+    return new Set(guess.reduce((v, a) => v + a.amount, 0) <= r.credit ? guess.map(a => a.id) : []);
+  });
+  if (!list.length) return null;
+  const chosen = list.filter(a => picked.has(a.id));
+  const total = chosen.reduce((v, a) => v + a.amount, 0);
+  const toggle = (id: string) => { const n = new Set(picked); if (n.has(id)) n.delete(id); else n.add(id); setPicked(n); };
+  return (
+    <div className="confirm">
+      <b>Workbook months recorded for {memberName(s, memberId)} without a bank payment</b>
+      <p className="small">If this payment is the one the workbook recorded, link it to those months instead of approving it below, which would count the money a second time.{list.some(near) ? ' Months the workbook dates within 3 days of this payment are preselected.' : ''}</p>
+      <div className="wb-months">{list.map(a => (
+        <label key={a.id} className="inline"><input type="checkbox" checked={picked.has(a.id)} onChange={() => toggle(a.id)} /> {monthLabel(a.month)} {money(a.amount)}{a.kind === 'joining' ? ' (joining)' : ''}{a.received ? <span className="dim small"> paid {a.received}</span> : null}</label>
+      ))}</div>
+      <div className="actions">
+        <button className="primary" disabled={busy || !chosen.length || total > r.credit} onClick={() => onLink(chosen.map(a => a.id))}>Link {chosen.length} month(s) · {money(total)} of {money(r.credit)}</button>
+        {total > r.credit && <span className="bad-text">The chosen months are more than this payment. If a workbook amount is wrong, correct it from the Monthly grid first.</span>}
+        {total > 0 && total < r.credit && <span className="dim small">{money(r.credit - total)} will be kept as unapplied credit.</span>}
+      </div>
     </div>
   );
 }

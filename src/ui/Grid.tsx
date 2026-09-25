@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react';
 import type { ScreenProps } from '../App';
 import { Member, money, monthLabel, monthNames } from '../model';
 import { Ledger } from '../reports';
-import { lastRosterYear, months, onRoster } from '../engine';
+import { editWorkbookAmount, lastRosterYear, months, onRoster } from '../engine';
 import { ErrorLine, cx, useAsync } from './common';
 import { LEGEND, STATUS, drawGridImage, toBlob } from './gridImage';
 
-export function Grid({ s, cutoff }: ScreenProps) {
+export function Grid({ s, cutoff, store }: ScreenProps) {
   const years = useMemo(() => {
     const ys = new Set<number>();
     for (const a of s.allocations) ys.add(Number(a.month.slice(0, 4)));
@@ -22,6 +22,8 @@ export function Grid({ s, cutoff }: ScreenProps) {
   const [showAll, setShowAll] = useState(false);
   const [onlyDue, setOnlyDue] = useState(false);
   const { busy, error, run } = useAsync();
+  const [edit, setEdit] = useState<{ id: string; amount: string; reason: string }>();
+  const saving = useAsync();
   const ledger = useMemo(() => new Ledger(s, cutoff), [s, cutoff]);
   const cols = months(`${year}-01`, `${year}-12`);
   const last = useMemo(() => lastRosterYear(s), [s]);
@@ -106,11 +108,32 @@ export function Grid({ s, cutoff }: ScreenProps) {
           <div className="report-head"><h3>{selected.name} — {pick!.month}</h3><button onClick={() => setPick(undefined)}>Close</button></div>
           <p>Status: <b>{STATUS[cell.status].label}</b> · Due {money(cell.due)} · Paid {money(cell.paid)}</p>
           {cell.allocations.length ? (
-            <table className="compact"><thead><tr><th>Amount</th><th>Type</th><th>Received</th><th>Receipt / source</th><th>Note</th></tr></thead>
+            <table className="compact"><thead><tr><th>Amount</th><th>Type</th><th>Received</th><th>Receipt / source</th><th>Note</th><th></th></tr></thead>
               <tbody>{cell.allocations.map(a => { const r = a.receiptId ? ledger.receipts.get(a.receiptId) : undefined; return (
                 <tr key={a.id}><td className="num">{money(a.amount)}</td><td>{a.kind}</td><td>{r?.date ?? a.received ?? 'unknown'}</td>
-                  <td className="narr">{r ? `${money(r.credit)} — ${r.narration}` : `Workbook ${a.source?.sheet ?? ''} ${a.source?.cells ?? ''} (no bank receipt linked)`}</td><td>{a.note}</td></tr>); })}</tbody></table>
+                  <td className="narr">{r ? `${money(r.credit)} — ${r.narration}` : `Workbook ${a.source?.sheet ?? ''} ${a.source?.cells ?? ''} (no bank receipt linked)`}</td><td>{a.note}</td>
+                  <td>{a.source?.sheet && !a.reversedBy && <button className="link" onClick={() => setEdit({ id: a.id, amount: String(a.amount / 100), reason: '' })}>Edit amount</button>}</td></tr>); })}</tbody></table>
           ) : <p className="dim">No payments allocated to this month{cell.due ? '' : ' and nothing is due'}.</p>}
+          {edit && cell.allocations.some(a => a.id === edit.id) && (
+            <div className="confirm">
+              <b>Correct the amount recorded in the workbook</b>
+              <p className="small">Use this for entry errors in the Excel file. The original cell stays in the archived workbook, and the change is recorded in the audit log.</p>
+              <div className="row">
+                <label>Amount (₹)<input className="short" inputMode="decimal" value={edit.amount} onChange={e => setEdit({ ...edit, amount: e.target.value })} /></label>
+                <label>Reason<input value={edit.reason} placeholder="e.g. typing error in workbook" onChange={e => setEdit({ ...edit, reason: e.target.value })} /></label>
+              </div>
+              <div className="actions">
+                <button className="primary" disabled={saving.busy} onClick={() => void saving.run(async () => {
+                  const paise = Math.round(Number(edit.amount) * 100);
+                  if (!edit.amount.trim() || !Number.isFinite(paise)) throw Error('Enter the amount in rupees.');
+                  await store.commit(d => editWorkbookAmount(d, edit.id, paise, edit.reason.trim()));
+                  setEdit(undefined);
+                })}>Save amount</button>
+                <button disabled={saving.busy} onClick={() => setEdit(undefined)}>Cancel</button>
+              </div>
+              <ErrorLine error={saving.error} />
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -393,6 +393,53 @@ export function removeDetached(s: State, receiptId: string) {
   audit(s, 'Workbook months removed', `${list.map(a => `${memberName(s, a.memberId)} ${a.month} ${money(a.amount)}`).join('; ')} (unlinked from a reopened transaction)`, list);
 }
 
+/** Correct the amount of a month recorded in the workbook (e.g. a typing error). The archived cell is kept. */
+export function editWorkbookAmount(s: State, allocationId: string, amount: number, reason = '') {
+  const a = s.allocations.find(x => x.id === allocationId);
+  if (!a || !isWorkbook(a)) throw Error('Only months recorded in the workbook can be edited here.');
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw Error('Enter an amount greater than zero.');
+  if (a.reversedBy) throw Error('This month was reversed by a refund and cannot be edited.');
+  if (a.receiptId) {
+    const r = s.receipts.find(x => x.id === a.receiptId)!;
+    if (allocated(s, r.id) - a.amount + amount > r.credit) throw Error(`The linked bank payment is only ${money(r.credit)}; the months linked to it would exceed that.`);
+  }
+  const before = structuredClone(a);
+  const was = a.amount;
+  a.amount = amount;
+  a.note = [a.note, `Corrected from ${money(was)}${reason ? `: ${reason}` : ''}`].filter(Boolean).join(' · ');
+  for (const i of s.issues.filter(i => i.allocationId === a.id && i.kind === 'Unusual monthly amount' && !i.resolved)) { i.resolved = true; i.resolution = `Amount corrected to ${money(amount)}`; }
+  audit(s, 'Workbook amount corrected', `${memberName(s, a.memberId)} ${monthLabel(a.month)}: ${money(was)} → ${money(amount)}${reason ? ` (${reason})` : ''}`, before, structuredClone(a));
+}
+
+/** Workbook months of a member not backed by any bank payment. */
+export const unlinkedWorkbook = (s: State, memberId: string) =>
+  s.allocations.filter(a => a.memberId === memberId && a.legacy && !a.receiptId && !a.reversedBy).sort((a, b) => a.month.localeCompare(b.month));
+
+/**
+ * Link workbook months to a bank payment (instead of allocating the payment again) and confirm it.
+ * Any remainder of the payment stays as unapplied credit.
+ */
+export function linkWorkbookMonths(s: State, receiptId: string, allocationIds: string[]) {
+  const r = s.receipts.find(x => x.id === receiptId);
+  if (!r || !r.credit) throw Error('Choose a credit transaction.');
+  if (r.status === 'duplicate') throw Error('This transaction is marked as a duplicate.');
+  const list = s.allocations.filter(a => allocationIds.includes(a.id));
+  if (!list.length || list.length !== allocationIds.length || list.some(a => !a.legacy || a.receiptId || a.reversedBy)) throw Error('Choose workbook months that are not linked to a bank payment.');
+  const members = new Set(list.map(a => a.memberId));
+  if (members.size !== 1) throw Error('Choose months of one member.');
+  const total = list.reduce((v, a) => v + a.amount, 0);
+  if (total > available(s, r)) throw Error(`The chosen months total ${money(total)}, more than the ${money(available(s, r))} available on this payment.`);
+  const before = structuredClone(r);
+  for (const a of list) { a.receiptId = r.id; a.legacy = false; a.unlinkedFrom = undefined; }
+  for (const i of s.issues.filter(i => i.allocationId && allocationIds.includes(i.allocationId) && !i.resolved)) { i.resolved = true; i.resolution = `Linked to the ${r.date} bank payment`; }
+  r.memberId = list[0].memberId;
+  r.category = list.some(a => a.kind === 'joining') ? 'Joining contribution' : 'Member contribution';
+  r.status = 'confirmed';
+  r.duplicateOf = undefined;
+  r.reason = `Linked by treasurer to workbook months ${list.map(a => monthLabel(a.month)).join(', ')}${total < r.credit ? `; ${money(r.credit - total)} kept as unapplied credit` : ''}`;
+  audit(s, 'Workbook months linked', `${r.date} ${money(r.credit)} (${memberName(s, r.memberId)}) → ${list.map(a => `${monthLabel(a.month)} ${money(a.amount)}`).join(', ')}`, before, structuredClone(r));
+}
+
 export function markDuplicate(s: State, receiptId: string, originalId?: string) {
   const r = s.receipts.find(x => x.id === receiptId);
   if (!r) throw Error('Transaction not found.');

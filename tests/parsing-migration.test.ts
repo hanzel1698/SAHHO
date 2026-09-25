@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import 'fake-indexeddb/auto';
 import { State, emptyState } from '../src/model';
 import { amount, date, emptyMapping, parseCSV, parseRows, readStatement, stageStatement, tableFromRows } from '../src/importer';
-import { decide, detachedFrom, explicitMonths, onRoster, relinkDetached, removeDetached, reopenReceipt } from '../src/engine';
+import { decide, detachedFrom, editWorkbookAmount, linkWorkbookMonths, unlinkedWorkbook, explicitMonths, onRoster, relinkDetached, removeDetached, reopenReceipt } from '../src/engine';
 import { signals } from '../src/matching';
 import { migrateWorkbook } from '../src/migration';
 import { ConflictError, load, save, undoImport, undoPreview, upgrade, validate } from '../src/storage';
@@ -250,6 +250,31 @@ describe('editing a linked transaction', () => {
     expect(s.allocations.filter(a => a.receiptId === r.id)).toHaveLength(0);
     decide(s, r.id, { memberId: r.memberId, category: 'Member contribution', months: ['2025-05', '2025-06'] });
     expect(months(s, r.id)).toEqual(['2025-05', '2025-06']);
+  });
+
+  it('corrects a workbook amount and links workbook months to a payment instead of allocating it twice', () => {
+    const s = structuredClone(base);
+    const r = r600(s);
+    reopenReceipt(s, r.id);
+    const asha = s.members.find(m => m.name === 'ASHA')!;
+    const [feb, mar, apr] = unlinkedWorkbook(s, asha.id).filter(a => a.month >= '2024-02');
+    editWorkbookAmount(s, mar.id, 30000, 'typing error');
+    expect(() => linkWorkbookMonths(s, r.id, [feb.id, mar.id, apr.id])).toThrow(/more than/);
+    editWorkbookAmount(s, mar.id, 20000, 'undo');
+    expect(mar.note).toMatch(/Corrected from ₹300: undo/);
+    linkWorkbookMonths(s, r.id, [feb.id, mar.id, apr.id]);
+    validate(s);
+    expect(r).toMatchObject({ status: 'confirmed', category: 'Member contribution', memberId: asha.id });
+    expect(months(s, r.id)).toEqual(['2024-02', '2024-03', '2024-04']);
+    expect(unlinkedWorkbook(s, asha.id).some(a => a.month >= '2024-02')).toBe(false);
+  });
+
+  it('refuses to push a linked payment over its amount when a workbook month is edited', () => {
+    const s = structuredClone(base);
+    const a = s.allocations.find(x => x.receiptId === r600(s).id)!;
+    expect(() => editWorkbookAmount(s, a.id, 30000)).toThrow(/only ₹600/);
+    const f = fixture();
+    expect(() => editWorkbookAmount(f, f.allocations[0].id, 100)).toThrow(/Only months recorded in the workbook/);
   });
 
   it('refuses receipts that are not confirmed or are part of a reversal', () => {
