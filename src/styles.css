@@ -94,13 +94,12 @@ tr.clickable:hover td, .clickable:hover { background: #f7faf9; cursor: pointer; 
 .report-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .report .actions { margin: 0; }
 .grid-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-height: 72vh; }
-table.grid td.gc { min-width: 74px; text-align: center; cursor: pointer; padding: 3px 4px; font-size: 12px; border-left: 1px solid var(--line); }
+table.grid td.gc { min-width: 46px; text-align: center; cursor: pointer; padding: 5px 3px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; border: 1px solid #fff; }
 table.grid th.sticky { white-space: nowrap; font-weight: 600; }
-.gc-amt { font-variant-numeric: tabular-nums; }
-.gc-st { font-size: 11px; }
-.gc.paid { background: #e6f4ec; } .gc.partly-paid { background: #fff4dd; } .gc.unpaid { background: #fdecea; }
-.gc.waived { background: #eef0f3; } .gc.future { color: var(--dim); } .gc.advance { background: #e8f0fb; }
-.gc.joining { background: #efe7fb; } .gc.n-a { color: #b0b6c0; } .gc.legacy { background: #f4f0e6; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0; font-size: 13px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #98a2b3; display: inline-block; }
+.toolbar-end { margin-left: auto; display: inline-flex; gap: 6px; }
 .gc.picked { outline: 2px solid var(--ink); outline-offset: -2px; }
 .file-button { position: relative; display: inline-block; border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; color: var(--ink); font-size: 14px; background: #fff; cursor: pointer; }
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
