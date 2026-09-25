@@ -3,10 +3,10 @@ import * as XLSX from 'xlsx';
 import 'fake-indexeddb/auto';
 import { emptyState } from '../src/model';
 import { amount, date, emptyMapping, parseCSV, parseRows, readStatement, stageStatement, tableFromRows } from '../src/importer';
-import { explicitMonths } from '../src/engine';
+import { explicitMonths, onRoster } from '../src/engine';
 import { signals } from '../src/matching';
 import { migrateWorkbook } from '../src/migration';
-import { ConflictError, load, save, undoImport, undoPreview, validate } from '../src/storage';
+import { ConflictError, load, save, undoImport, undoPreview, upgrade, validate } from '../src/storage';
 import { dashboard } from '../src/reports';
 import { demoState, demoStatementCSV } from '../src/demo';
 
@@ -173,6 +173,51 @@ describe('workbook migration (fictional workbook)', () => {
   it('refuses to migrate twice or into a non-empty register', () => {
     expect(() => migrateWorkbook(s, fictionalWorkbook(), 'fictional.xlsx', 'hash')).toThrow(/already/);
     expect(() => migrateWorkbook(demoState(), fictionalWorkbook(), 'f.xlsx', 'other')).toThrow(/empty register/);
+  });
+});
+
+/** Year sheets whose member lists change: DAVE leaves after 2023, ELLA joins in 2024. */
+function rosterWorkbook() {
+  const wb = XLSX.utils.book_new();
+  const sheet = (year: number, rows: unknown[][]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['NAME', year], ['', 'January', '', '', 'February'], ['', 'Share', 'Paid on', 'Note', 'Share'], ...rows, [], ['INTEREST'], ['TOTAL'], ['CUMULATIVE TOTAL'],
+  ]), String(year));
+  sheet(2023, [['ASHA', 350, '', '', 200], ['DAVE (left)', 350, '', '', 200]]);
+  sheet(2024, [['ASHA', 200], ['ELLA', 350, '', '', 200]]);
+  sheet(2025, [['ASHA'], ['ELLA (200-2025)']]);
+  return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+}
+
+describe('year-sheet rosters', () => {
+  const s = migrateWorkbook(emptyState(), rosterWorkbook(), 'roster.xlsx', 'roster');
+  const m = (n: string) => s.members.find(x => x.name === n)!;
+  const listed = (year: number) => s.members.filter(x => onRoster(s, x, year)).map(x => x.name).sort();
+
+  it('records the years each member is listed and marks members dropped from later sheets inactive', () => {
+    validate(s);
+    expect(s.members.map(x => x.name).sort()).toEqual(['ASHA', 'DAVE', 'ELLA']);
+    expect(m('ASHA').rosterYears).toEqual([2023, 2024, 2025]);
+    expect(m('DAVE').rosterYears).toEqual([2023]);
+    expect(m('ELLA').rosterYears).toEqual([2024, 2025]);
+    expect(m('DAVE').inactiveFrom).toBe('2024-01');
+    expect(m('ASHA').inactiveFrom).toBeUndefined();
+    expect(s.issues.some(i => i.kind === 'Left the register' && i.memberId === m('DAVE').id)).toBe(true);
+  });
+
+  it('lists only the members of each year sheet, and carries the last roster forward', () => {
+    expect(listed(2023)).toEqual(['ASHA', 'DAVE']);
+    expect(listed(2024)).toEqual(['ASHA', 'ELLA']);
+    expect(listed(2025)).toEqual(['ASHA', 'ELLA']);
+    expect(listed(2026)).toEqual(['ASHA', 'ELLA']);
+    expect(listed(2022)).toEqual([]);
+  });
+
+  it('recovers rosters from the archived sheets for registers migrated earlier', () => {
+    const old = structuredClone(s);
+    for (const x of old.members) delete x.rosterYears;
+    const up = upgrade(old);
+    expect(up.members.find(x => x.name === 'DAVE')!.rosterYears).toEqual([2023]);
+    expect(up.members.find(x => x.name === 'ELLA')!.rosterYears).toEqual([2024, 2025]);
   });
 });
 

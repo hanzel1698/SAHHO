@@ -86,7 +86,7 @@ export function migrateWorkbook(current: State, data: ArrayBuffer, file: string,
     if (!name || CATEGORY_LABELS.has(name) || NOT_NAMES.test(name) || !/[A-Z]{2}/.test(name)) return undefined;
     let m = members.get(name);
     if (!m) {
-      m = { id: id(), name, aliases: [], notes: '', exceptions: [] };
+      m = { id: id(), name, aliases: [], notes: '', exceptions: [], rosterYears: [] };
       const similar = [...members.values()].filter(x => x.name.split(' ')[0] === name.split(' ')[0]);
       members.set(name, m);
       s.members.push(m);
@@ -123,6 +123,7 @@ export function migrateWorkbook(current: State, data: ArrayBuffer, file: string,
       if (!nameCell?.v || nameCell.f) continue;
       const m = member(nameCell.v, source(name, row, 'A' + row));
       if (!m) continue;
+      if (!m.rosterYears!.includes(Number(name))) m.rosterYears!.push(Number(name));
       for (const g of groups) {
         const addr = XLSX.utils.encode_cell({ r: row - 1, c: g.col });
         const cell = ws[addr];
@@ -169,6 +170,15 @@ export function migrateWorkbook(current: State, data: ArrayBuffer, file: string,
     for (const a of list.filter(a => a.kind === 'regular' && a.amount !== 20000 && a.amount !== s.settings.joiningAmount)) {
       issue({ kind: 'Unusual monthly amount', memberId: m.id, allocationId: a.id, source: a.source, reason: `${m.name} ${a.month}: ${money(a.amount)} recorded. Preserved as recorded.` });
     }
+  }
+
+  // 4b. Members dropped from the later year sheets left the register: no dues after their last listed year.
+  const lastYear = monthlySheets.length ? Number(monthlySheets[monthlySheets.length - 1]) : undefined;
+  for (const m of s.members) {
+    const years = m.rosterYears!;
+    if (lastYear === undefined || !years.length || years[years.length - 1] >= lastYear) continue;
+    m.inactiveFrom = `${years[years.length - 1] + 1}-01`;
+    issue({ kind: 'Left the register', memberId: m.id, suggestion: m.inactiveFrom, reason: `${m.name} is listed in the ${years[0]}${years.length > 1 ? `–${years[years.length - 1]}` : ''} sheets but not from ${years[years.length - 1] + 1}. Marked inactive from ${m.inactiveFrom}; change the member's inactive month if they left earlier.` });
   }
 
   // 5. Bank transactions from the *_Trxns sheets.
@@ -382,6 +392,7 @@ export function migrateWorkbook(current: State, data: ArrayBuffer, file: string,
     members: s.members.length,
     membersWithConfirmedStart: s.members.filter(m => m.start).length,
     membersNeedingStartMonth: s.members.filter(m => !m.start).length,
+    membersLeftRegister: s.members.filter(m => m.inactiveFrom).length,
     bankTransactions: s.receipts.length,
     bankCreditsPaise: s.receipts.reduce((v, r) => v + r.credit, 0),
     bankDebitsPaise: s.receipts.reduce((v, r) => v + r.debit, 0),

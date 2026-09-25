@@ -30,6 +30,7 @@ export interface Member {
   start?: string;           // first month of regular obligations (confirmed)
   suggestedStart?: string;  // migration suggestion awaiting confirmation; never used for dues
   inactiveFrom?: string;    // no obligations from this month
+  rosterYears?: number[];   // years whose workbook sheet lists this member (the register as kept then)
   exceptions: MemberException[];
 }
 

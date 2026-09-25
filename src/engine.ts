@@ -25,6 +25,45 @@ export function due(s: State, m: Member, month: string) {
   return rateFor(s, month);
 }
 
+/** Latest year covered by a workbook roster, if the register was migrated from the workbook. */
+export function lastRosterYear(s: State) {
+  let last: number | undefined;
+  for (const m of s.members) for (const y of m.rosterYears ?? []) if (last === undefined || y > last) last = y;
+  return last;
+}
+
+/**
+ * Whether a member belongs on the register for a year. Workbook years follow that year's sheet exactly
+ * (members removed later or joining later are left out); years after the workbook carry its last roster
+ * forward until the member becomes inactive. Members without a roster (added in the app) follow their
+ * start and inactive months.
+ */
+export function onRoster(s: State, m: Member, year: number, last = lastRosterYear(s)) {
+  const inactive = !!m.inactiveFrom && m.inactiveFrom <= `${year}-01`;
+  if (m.rosterYears?.length && last !== undefined) {
+    if (year <= last) return m.rosterYears.includes(year);
+    return m.rosterYears.includes(last) && !inactive;
+  }
+  const from = m.start ?? m.joiningMonth ?? m.suggestedStart;
+  return !inactive && (!from || from <= `${year}-12`);
+}
+
+/** Workbook year sheets archived at migration → the years each member name is listed in column A. */
+export function rosterFromArchives(s: State) {
+  const byName = new Map<string, Set<number>>();
+  for (const a of s.archives) {
+    if (!/^20\d{2}$/.test(a.name)) continue;
+    for (const [addr, c] of Object.entries(a.cells)) {
+      const row = /^A(\d+)$/.exec(addr);
+      if (!row || Number(row[1]) < 4 || c.formula || typeof c.value !== 'string') continue;
+      const name = norm(c.value.replace(/\([^)]*\)?/g, ' '));
+      if (!byName.has(name)) byName.set(name, new Set());
+      byName.get(name)!.add(Number(a.name));
+    }
+  }
+  return byName;
+}
+
 /** Last month whose contribution is due on the cutoff date (a month is due on settings.dueDay). */
 export function lastDueMonth(s: State, cutoff: string) {
   return Number(cutoff.slice(8, 10)) >= s.settings.dueDay ? monthOf(cutoff) : addMonth(monthOf(cutoff), -1);

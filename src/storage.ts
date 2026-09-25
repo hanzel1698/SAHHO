@@ -1,5 +1,6 @@
 // IndexedDB persistence with optimistic revision checks, validated backups and import rollback.
 import { SCHEMA, State, audit, categories, defaultSettings, emptyState } from './model';
+import { rosterFromArchives } from './engine';
 
 const DB = 'sahho-local-v1';
 const STORE = 'state';
@@ -22,6 +23,14 @@ export function upgrade(raw: unknown): State {
   if (s.schema !== SCHEMA) throw Error(`Saved data uses schema ${s.schema}; this version understands schema ${SCHEMA}.`);
   s.settings = { ...defaultSettings(), ...s.settings };
   s.receipts.forEach((r, i) => { if (r.order === undefined) r.order = i; });
+  // Registers migrated before rosters were recorded: recover each member's years from the archived year sheets.
+  if (s.members.every(m => m.rosterYears === undefined)) {
+    const roster = rosterFromArchives(s);
+    if (roster.size) for (const m of s.members) {
+      const years = new Set([m.name, ...m.aliases].flatMap(n => [...roster.get(n) ?? []]));
+      m.rosterYears = [...years].sort((a, b) => a - b);
+    }
+  }
   return s;
 }
 
@@ -86,7 +95,8 @@ export function validate(v: unknown): asserts v is State {
     throw Error('Invalid contribution policy.');
   }
   for (const m of s.members) {
-    if (typeof m.name !== 'string' || !Array.isArray(m.aliases) || !Array.isArray(m.exceptions) || (m.start && !month(m.start)) || (m.joiningMonth && !month(m.joiningMonth)) ||
+    if (typeof m.name !== 'string' || !Array.isArray(m.aliases) || !Array.isArray(m.exceptions) || (m.start && !month(m.start)) || (m.joiningMonth && !month(m.joiningMonth)) || (m.inactiveFrom && !month(m.inactiveFrom)) ||
+      (m.rosterYears !== undefined && (!Array.isArray(m.rosterYears) || m.rosterYears.some(y => !Number.isInteger(y)))) ||
       m.exceptions.some(e => !month(e.from) || !month(e.to) || e.from > e.to || !paise(e.amount))) throw Error(`Invalid member record: ${m.name}.`);
   }
   for (const r of s.receipts) {
