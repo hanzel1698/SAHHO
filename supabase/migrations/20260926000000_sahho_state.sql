@@ -42,7 +42,9 @@ create policy "treasurers update state" on public.sahho_state
   using (exists (select 1 from public.treasurers t where t.user_id = (select auth.uid())))
   with check (exists (select 1 from public.treasurers t where t.user_id = (select auth.uid())));
 
-revoke all on public.treasurers, public.sahho_state from anon;
+-- Projects created before Supabase stopped auto-granting still give anon/authenticated every table privilege
+-- (including TRUNCATE, which RLS does not cover). Start from nothing and grant only what the app uses.
+revoke all on public.treasurers, public.sahho_state from anon, authenticated;
 grant select on public.treasurers to authenticated;
 grant select, insert, update on public.sahho_state to authenticated;
 

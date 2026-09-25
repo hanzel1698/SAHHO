@@ -13,6 +13,8 @@ test('Supabase migration: only treasurers can read/save, stale saves are refused
     create schema auth; grant usage on schema auth to anon, authenticated;
     create table auth.users (id uuid primary key, email text);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+    -- Older Supabase projects auto-grant every privilege on new public tables; the migration must undo that.
+    alter default privileges in schema public grant all on tables to anon, authenticated;
     insert into auth.users values ('11111111-1111-1111-1111-111111111111', 't@x'), ('22222222-2222-2222-2222-222222222222', 'other@x');
   `);
   await db.exec(migration);
@@ -49,5 +51,6 @@ test('Supabase migration: only treasurers can read/save, stale saves are refused
   r = await as('anon', null, 'select * from public.sahho_state'); check('anon denied table', !!r.error, r);
   r = await as('anon', null, 'select public.save_sahho_state(2, $1::jsonb)', [doc('x')]); check('anon denied rpc', !!r.error, r);
   r = await as('authenticated', T, 'delete from public.sahho_state'); check('delete not permitted', !!r.error, r);
+  r = await as('authenticated', O, 'truncate public.sahho_state'); check('truncate not permitted', !!r.error, r);
   r = await as('authenticated', T, `update public.sahho_state set id='other'`); check('cannot rename row', !!r.error, r);
 });
