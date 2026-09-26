@@ -40,6 +40,7 @@ main { padding: 12px 24px 40px; min-width: 0; }
 .small { font-size: 12px; }
 .nowrap { white-space: nowrap; }
 .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+th.center, td.center { text-align: center; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .banner { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; display: flex; gap: 12px; align-items: center; }
 .banner.warn { background: var(--warn-bg); color: var(--warn); }

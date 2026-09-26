@@ -66,9 +66,9 @@ export function ReportTable({ table, limit = 500, compact = false, nowrap = fals
       {table.note && <p className="note">{table.note}</p>}
       <div className="table-wrap">
         <table className={[compact && 'compact', nowrap && 'nowrap'].filter(Boolean).join(' ') || undefined}>
-          <thead><tr>{table.columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
+          <thead><tr>{table.columns.map(c => <th key={c} className={table.center?.includes(c) ? 'center' : undefined}>{c}</th>)}</tr></thead>
           <tbody>
-            {rows.map((r, i) => <tr key={i} className={splitClass(table.groups, i)}>{r.map((v, j) => <td key={j} className={/\(₹\)/.test(table.columns[j]) ? 'num' : undefined}>{v}</td>)}</tr>)}
+            {rows.map((r, i) => <tr key={i} className={splitClass(table.groups, i)}>{r.map((v, j) => <td key={j} className={/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) ? 'center' : undefined}>{v}</td>)}</tr>)}
             {!rows.length && <tr><td colSpan={table.columns.length} className="dim">No rows.</td></tr>}
           </tbody>
         </table>

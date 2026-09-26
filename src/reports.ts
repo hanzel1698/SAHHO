@@ -158,6 +158,8 @@ export type Table = {
   title: string; columns: string[]; rows: (string | number)[][]; note?: string;
   /** Optional per-row group number (parallel to rows); rows sharing a number are shown as one group. */
   groups?: (number | undefined)[];
+  /** Column names whose header and cells are centred. */
+  center?: string[];
 };
 
 const rupees = (p: number) => (p / 100).toFixed(2);
@@ -224,7 +226,7 @@ export function outstandingReport(s: State, cutoff: string): Table {
   const ledger = new Ledger(s, cutoff);
   const rows = s.members.map(m => ledger.summary(m)).filter(x => x.outstanding > 0 || !x.member.start)
     .map(x => [x.member.name, x.member.start ?? 'Not confirmed', rupees(x.outstanding), x.unpaid.length, x.partial.length, monthRanges([...x.unpaid, ...x.partial])]);
-  return { title: `Outstanding contributions as of ${cutoff}`, columns: ['Member', 'Start month', 'Outstanding (₹)', 'Unpaid', 'Partly paid', 'Months'], rows, note: `Months due through ${ledger.until} (a month falls due on day ${s.settings.dueDay}). Payments received after ${cutoff} are excluded. Members without a confirmed start month have no dues calculated.` };
+  return { title: `Outstanding contributions as of ${cutoff}`, columns: ['Member', 'Start month', 'Outstanding (₹)', 'Unpaid', 'Partly paid', 'Months'], center: ['Unpaid', 'Partly paid'], rows, note: `Months due through ${ledger.until} (a month falls due on day ${s.settings.dueDay}). Payments received after ${cutoff} are excluded. Members without a confirmed start month have no dues calculated.` };
 }
 
 export function receivedByReceiptMonth(s: State, cutoff: string): Table {
