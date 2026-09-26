@@ -1,5 +1,5 @@
 // IndexedDB persistence with optimistic revision checks, validated backups and import rollback.
-import { SCHEMA, State, audit, categories, defaultSettings, emptyState } from './model';
+import { COLLECTIONS, Changes, SCHEMA, State, audit, categories, defaultSettings, emptyState } from './model';
 import { rosterFromArchives } from './engine';
 
 const DB = 'sahho-local-v1';
@@ -23,6 +23,12 @@ export function upgrade(raw: unknown): State {
   if (s.schema !== SCHEMA) throw Error(`Saved data uses schema ${s.schema}; this version understands schema ${SCHEMA}.`);
   s.settings = { ...defaultSettings(), ...s.settings };
   s.receipts.forEach((r, i) => { if (r.order === undefined) r.order = i; });
+  // Older imports kept a full copy of the previous records for undo; keep only what differs.
+  const legacy = s.undo as unknown as { before?: State } | undefined;
+  if (legacy?.before) {
+    const { before, ...rest } = legacy as { before: State } & Record<string, unknown>;
+    s.undo = { ...(rest as Omit<NonNullable<State['undo']>, 'changes'>), changes: changesBetween(before, s) };
+  }
   // Registers migrated before rosters were recorded: recover each member's years from the archived year sheets.
   if (s.members.every(m => m.rosterYears === undefined)) {
     const roster = rosterFromArchives(s);
@@ -149,16 +155,62 @@ export function undoPreview(s: State) {
   };
 }
 
-/** Restore the state from just before the last import. Later edits are listed and must be confirmed. */
+/** What changed from `before` to `after`, enough to put `before` back. Audit history is never rolled back. */
+export function changesBetween(before: State, after: State): Changes {
+  const changes: Changes = { added: {}, before: {}, mappings: {} };
+  for (const key of COLLECTIONS) {
+    const old = new Map<string, { id: string }>(before[key].map(x => [x.id, x]));
+    const now = new Map<string, { id: string }>(after[key].map(x => [x.id, x]));
+    const added = [...now.keys()].filter(k => !old.has(k));
+    const changed = [...old.values()].filter(x => !now.has(x.id) || JSON.stringify(x) !== JSON.stringify(now.get(x.id)));
+    if (added.length) changes.added[key] = added;
+    if (changed.length) changes.before[key] = structuredClone(changed);
+  }
+  for (const k of new Set([...Object.keys(before.mappings), ...Object.keys(after.mappings)])) {
+    if (JSON.stringify(before.mappings[k]) !== JSON.stringify(after.mappings[k])) changes.mappings[k] = before.mappings[k] ? structuredClone(before.mappings[k]) : null;
+  }
+  if (JSON.stringify(before.settings) !== JSON.stringify(after.settings)) changes.settings = structuredClone(before.settings);
+  return changes;
+}
+
+/** Take back the last import's changes. Later edits are listed and must be confirmed; those touching its records go with it. */
 export function undoImport(s: State, confirmLaterEdits = false): State {
   const preview = undoPreview(s);
   if (!s.undo || !preview) throw Error('There is no import to undo.');
   if (preview.laterEdits.length && !confirmLaterEdits) throw Error(`${preview.laterEdits.length} later change(s) depend on this import. Review them before rolling back.`);
-  const next: State = structuredClone(s.undo.before) as State;
-  next.revision = s.revision;
-  next.audit = s.audit.slice();
-  next.lastBackup = s.lastBackup;
+  const { changes } = s.undo;
+  const next: State = structuredClone(s);
+  delete next.undo;
+  for (const key of COLLECTIONS) {
+    const added = new Set(changes.added[key]);
+    const restore = new Map((changes.before[key] ?? []).map(x => [x.id, x]));
+    const list = (next[key] as { id: string }[]).filter(x => !added.has(x.id)).map(x => restore.get(x.id) ?? x);
+    const present = new Set(list.map(x => x.id));
+    for (const x of restore.values()) if (!present.has(x.id)) list.push(x);
+    (next[key] as { id: string }[]) = structuredClone(list);
+  }
+  for (const [k, m] of Object.entries(changes.mappings)) { if (m) next.mappings[k] = m; else delete next.mappings[k]; }
+  if (changes.settings) next.settings = changes.settings;
+  dropDangling(next);
   if (preview.batch) next.batches.push({ ...preview.batch, undone: true });
   audit(next, 'Import undone', `${preview.batch?.file}: removed ${preview.receipts} transactions and ${preview.allocations} allocations${preview.laterEdits.length ? `; discarded ${preview.laterEdits.length} later change(s)` : ''}.`);
   return next;
+}
+
+/** Remove what pointed at records the undo took away (later allocations, rule evidence, review items ...). */
+function dropDangling(s: State) {
+  const ms = new Set(s.members.map(m => m.id)), rs = new Set(s.receipts.map(r => r.id));
+  const has = (set: Set<string>, v?: string) => !v || set.has(v);
+  s.allocations = s.allocations.filter(a => ms.has(a.memberId) && has(rs, a.receiptId));
+  for (const a of s.allocations) if (!has(rs, a.reversedBy)) delete a.reversedBy;
+  const allocs = new Set(s.allocations.map(a => a.id));
+  for (const r of s.receipts) {
+    if (!has(ms, r.memberId)) delete r.memberId;
+    if (!has(rs, r.reversalOf)) delete r.reversalOf;
+    if (!has(rs, r.duplicateOf)) delete r.duplicateOf;
+  }
+  s.rules = s.rules.filter(r => has(ms, r.memberId));
+  for (const r of s.rules) r.evidence = r.evidence.filter(e => rs.has(e));
+  s.issues = s.issues.filter(i => has(rs, i.receiptId) && has(ms, i.memberId) && has(allocs, i.allocationId));
+  for (const c of s.charity) if (!has(rs, c.receiptId)) delete c.receiptId;
 }

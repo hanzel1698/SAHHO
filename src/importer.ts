@@ -2,6 +2,7 @@
 import * as XLSX from 'xlsx';
 import { Batch, Mapping, Receipt, Reconciliation, State, audit, id, money, norm } from './model';
 import { processReceipt } from './engine';
+import { changesBetween } from './storage';
 import { senderOf } from './matching';
 
 /** Strip Excel text wrappers such as ="123" and surrounding whitespace. */
@@ -354,8 +355,6 @@ export function stageStatement(current: State, table: Table, file: string, diges
   s.batches.push(batch);
   s.mappings[table.signature] = table.mapping;
   audit(s, 'Statement imported', `${file}: ${kept.length} new (${auto.length} automatic, ${review.length} for review), ${skipped.length} already recorded, ${invalid.length} invalid rows`);
-  const before = structuredClone(current);
-  delete before.undo;
-  s.undo = { batchId, revision: current.revision + 1, auditCount: s.audit.length, before };
+  s.undo = { batchId, revision: current.revision + 1, auditCount: s.audit.length, changes: changesBetween(current, s) };
   return { state: s, batch, auto, review, skipped, invalid };
 }

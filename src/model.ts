@@ -196,8 +196,22 @@ export interface State {
   settings: Settings;
   lastBackup?: string;
   demo: boolean;
-  undo?: { batchId: string; revision: number; auditCount: number; before: Omit<State, 'undo'> };
+  undo?: Undo;
 }
+
+/** Records kept by id; an import's changes to them are recorded for undo. */
+export const COLLECTIONS = ['members', 'receipts', 'allocations', 'rules', 'issues', 'charity', 'batches'] as const;
+export type Collection = typeof COLLECTIONS[number];
+
+/** What an import changed: ids it added, and the earlier version of every record it changed or removed. */
+export interface Changes {
+  added: Partial<Record<Collection, string[]>>;
+  before: Partial<Record<Collection, { id: string }[]>>;
+  mappings: Record<string, Mapping | null>;  // null = the key did not exist
+  settings?: Settings;
+}
+
+export interface Undo { batchId: string; revision: number; auditCount: number; changes: Changes }
 
 export const defaultSettings = (): Settings => ({
   rates: [{ from: '2000-01', amount: 20000 }],

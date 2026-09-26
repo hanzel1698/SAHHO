@@ -342,6 +342,43 @@ describe('storage', () => {
     expect(back.audit.some(a => a.action === 'Import undone')).toBe(true);
   });
 
+  it('undo keeps only what the import changed, not a copy of the whole register', () => {
+    const base = demoState();
+    const t = readStatement(new TextEncoder().encode(demoStatementCSV()).buffer as ArrayBuffer, 'd.csv', base);
+    const st = stageStatement(base, t, 'd.csv', 'h1').state;
+    const { changes } = st.undo!;
+    expect(changes.added.receipts!.length).toBe(st.receipts.length - base.receipts.length);
+    expect(JSON.stringify(changes).length).toBeLessThan(JSON.stringify(base).length / 2);
+    expect(JSON.stringify(undoImport(st).receipts)).toBe(JSON.stringify(base.receipts));
+  });
+
+  it('undo also removes later edits that depend on the imported transactions', () => {
+    const base = demoState();
+    const t = readStatement(new TextEncoder().encode(demoStatementCSV()).buffer as ArrayBuffer, 'd.csv', base);
+    const st = stageStatement(base, t, 'd.csv', 'h1').state;
+    const imported = st.receipts.find(r => r.batch === st.undo!.batchId && r.credit > 0)!;
+    st.allocations.push({ id: 'later-a', receiptId: imported.id, memberId: st.members[0].id, month: '2030-01', amount: 1, kind: 'regular', legacy: false, note: '' });
+    st.rules.push({ id: 'later-r', token: 'X', memberId: st.members[0].id, enabled: true, evidence: [imported.id, base.receipts[0].id], validated: true, origin: 'manual' });
+    st.members[1].notes = 'edited later';
+    st.audit.push({ id: 'later', at: 'x', action: 'Review approved', detail: 'later edit' });
+    const back = undoImport(st, true);
+    validate(back);
+    expect(back.allocations.some(a => a.id === 'later-a')).toBe(false);
+    expect(back.rules.find(r => r.id === 'later-r')!.evidence).toEqual([base.receipts[0].id]);
+    expect(back.members[1].notes).toBe('edited later');
+  });
+
+  it('converts an undo saved as a full copy by an earlier version', () => {
+    const base = demoState();
+    const t = readStatement(new TextEncoder().encode(demoStatementCSV()).buffer as ArrayBuffer, 'd.csv', base);
+    const st = stageStatement(base, t, 'd.csv', 'h1').state;
+    const { changes: _, ...rest } = st.undo!;
+    const old = structuredClone({ ...st, undo: { ...rest, before: base } }) as unknown as State;
+    const up = upgrade(old);
+    expect(up.undo!.changes.added.receipts).toEqual(st.undo!.changes.added.receipts);
+    expect(JSON.stringify(undoImport(up).receipts)).toBe(JSON.stringify(base.receipts));
+  });
+
   it('rejects invalid money values', () => {
     const s = demoState();
     s.receipts[0].credit = 1.5;

@@ -30,12 +30,21 @@ async function assertTreasurer() {
   if (!data.length) throw Error('This account is signed in but is not registered as a SAHHO treasurer. Ask the administrator to add it.');
 }
 
+// The workbook archive is stored in its own row and sent only when it differs from what the database holds.
+let storedArchives: string | undefined;
+
 export async function cloudLoad(): Promise<State> {
   await assertTreasurer();
-  const { data, error } = await cloud!.from('sahho_state').select('data, revision').eq('id', 'main').maybeSingle();
+  const [{ data, error }, archive] = await Promise.all([
+    cloud!.from('sahho_state').select('data, revision').eq('id', 'main').maybeSingle(),
+    cloud!.from('sahho_archive').select('data').eq('id', 'main').maybeSingle(),
+  ]);
   if (error) throw Error(error.message);
+  // No archive row yet (or the database predates it): archives are still inside the records, and the next save moves them.
+  const archives = archive.data?.data as State['archives'] | undefined;
+  storedArchives = archives ? JSON.stringify(archives) : undefined;
   if (!data) return emptyState();
-  return { ...upgrade(data.data), revision: data.revision };
+  return { ...upgrade({ ...data.data, archives: archives ?? data.data.archives ?? [] }), revision: data.revision };
 }
 
 /** Latest saved revision, used to notice changes made on another device. */
@@ -46,12 +55,22 @@ export async function cloudRevision(): Promise<number | undefined> {
 
 export async function cloudSave(next: State, expected: number): Promise<State> {
   validate(next);
-  const { data, error } = await cloud!.rpc('save_sahho_state', { expected, next });
+  const { archives, ...records } = next;
+  const archiveText = JSON.stringify(archives);
+  const sendArchives = archiveText !== storedArchives;
+  let { data, error } = await cloud!.rpc('save_sahho_state', sendArchives ? { expected, next: records, archives } : { expected, next: records });
+  let legacy = false;
+  if (error?.code === 'PGRST202') {
+    // The database has not had the archive migration yet: save everything in one document as before.
+    ({ data, error } = await cloud!.rpc('save_sahho_state', { expected, next }));
+    legacy = true;
+  }
   if (error) {
     if (error.code === '40001' || error.code === '23505') throw new ConflictError('Another device or tab changed the records. Your change was not saved; the latest data has been loaded.');
     throw Error(`Save failed. No changes were committed. (${error.message})`);
   }
   const revision = data as number;
+  if (sendArchives && !legacy) storedArchives = archiveText;
   try { new BroadcastChannel(CHANNEL).postMessage(revision); } catch { /* not supported */ }
   return { ...next, revision };
 }

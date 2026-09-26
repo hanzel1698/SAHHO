@@ -56,7 +56,7 @@ export function Settings({ s, store }: ScreenProps) {
         {undo ? (
           <>
             <p><b>{undo.batch?.file}</b>: removes {undo.receipts} transactions and {undo.allocations} allocations.</p>
-            {undo.laterEdits.length > 0 && <div className="warn-text">These later changes will also be undone:<ul>{undo.laterEdits.slice(0, 10).map(a => <li key={a.id}>{a.at.slice(0, 16).replace('T', ' ')} — {a.action}: {a.detail}</li>)}</ul></div>}
+            {undo.laterEdits.length > 0 && <div className="warn-text">Changes made after this import — any that involve its transactions are undone with it:<ul>{undo.laterEdits.slice(0, 10).map(a => <li key={a.id}>{a.at.slice(0, 16).replace('T', ' ')} — {a.action}: {a.detail}</li>)}</ul></div>}
             <button disabled={busy} onClick={() => { if (confirm('Roll back this import?')) void run(() => store.replace(undoImport(s, true))); }}>Undo import</button>
           </>
         ) : <p className="dim">No import available to undo.</p>}

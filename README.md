@@ -56,7 +56,7 @@ What migration does:
 - Each existing record can match only one incoming row, so genuine separate payments on the same day for the same amount are kept.
 - Uncertain matches go to review as *Possible duplicates* and are **excluded from all totals** until you decide.
 
-**Undo:** *Backup & settings → Undo last import* shows what will be removed. If you made changes after the import, those are listed and you must confirm them too.
+**Undo:** *Backup & settings → Undo last import* shows what will be removed. If you made changes after the import, those are listed and you must confirm them; changes that involve the imported transactions (e.g. allocating one of them) are undone with it, other changes are kept.
 
 ## 4. How contributions are allocated (default policy)
 
@@ -110,7 +110,7 @@ The notes above describe **browser-only mode**. With Supabase configured (§9), 
 
 When the site is built with `VITE_SUPABASE_URL` and `VITE_SUPABASE_KEY`, the app asks the treasurer to sign in and stores the register in Supabase instead of IndexedDB:
 
-- The whole register is one JSON record in `public.sahho_state` (same format as a backup file).
+- The whole register is one JSON record in `public.sahho_state` (same format as a backup file), except the workbook archive (every migrated sheet cell), which never changes and is kept in `public.sahho_archive` so it is not re-sent with every save.
 - Saves go through `save_sahho_state(expected, next)`, a compare-and-swap: if another device saved first, the save is refused and the latest records are loaded. Nothing is ever silently overwritten.
 - Row-level security: only accounts listed in `public.treasurers` can read or write. Anyone else — including other signed-in users — sees nothing.
 - Changes from another device are picked up when the window regains focus and every minute.
@@ -121,7 +121,7 @@ When the site is built with `VITE_SUPABASE_URL` and `VITE_SUPABASE_KEY`, the app
 ### 9a. Supabase (once)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. **SQL Editor** → paste and run [`supabase/migrations/20260926000000_sahho_state.sql`](supabase/migrations/20260926000000_sahho_state.sql).
+2. **SQL Editor** → paste and run each file in [`supabase/migrations/`](supabase/migrations/) in name order: [`20260926000000_sahho_state.sql`](supabase/migrations/20260926000000_sahho_state.sql), then [`20260926120000_archive_and_timeout.sql`](supabase/migrations/20260926120000_archive_and_timeout.sql). Both are safe to re-run. Existing projects only need the second one.
 3. **Authentication → Sign In / Providers**: turn **off** *Allow new users to sign up* (only invited treasurers may have accounts).
 4. **Authentication → Users → Add user → Create new user**: the treasurer's email and a strong password (tick *Auto confirm*).
 5. **SQL Editor** — make that account a treasurer:

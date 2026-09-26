@@ -1,11 +1,11 @@
 // Verifies the Supabase migration (row-level security + compare-and-swap save) on an embedded Postgres.
 import { PGlite } from '@electric-sql/pglite';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { expect, test } from 'vitest';
 
 test('Supabase migration: only treasurers can read/save, stale saves are refused', async () => {
   const db = new PGlite();
-  const migration = readFileSync('supabase/migrations/20260926000000_sahho_state.sql', 'utf8');
+  const migration = readdirSync('supabase/migrations').sort().map(f => readFileSync(`supabase/migrations/${f}`, 'utf8')).join('\n');
   // Minimal Supabase stand-ins: API roles, auth schema and auth.uid() from the JWT subject.
   await db.exec(`
     create role anon nologin; create role authenticated nologin;
@@ -53,4 +53,22 @@ test('Supabase migration: only treasurers can read/save, stale saves are refused
   r = await as('authenticated', T, 'delete from public.sahho_state'); check('delete not permitted', !!r.error, r);
   r = await as('authenticated', O, 'truncate public.sahho_state'); check('truncate not permitted', !!r.error, r);
   r = await as('authenticated', T, `update public.sahho_state set id='other'`); check('cannot rename row', !!r.error, r);
+
+  // Workbook archive: kept in its own row, never inside the records document.
+  const withArchive = JSON.stringify({ schema: 1, revision: 0, members: [{ n: 'd' }], archives: [{ name: '2020' }] });
+  r = await as('authenticated', T, 'select public.save_sahho_state(2, $1::jsonb) as v', [withArchive]); check('app before this change: archives in the document -> 3', r.rows?.[0]?.v === 3, r);
+  r = await as('authenticated', T, `select s.data ? 'archives' as inline, a.data->0->>'name' as name from public.sahho_state s, public.sahho_archive a`);
+  check('archives moved to the archive row', r.rows?.[0]?.inline === false && r.rows[0].name === '2020', r);
+  r = await as('authenticated', T, 'select public.save_sahho_state(3, $1::jsonb) as v', [doc('e')]); check('save without archives -> 4', r.rows?.[0]?.v === 4, r);
+  r = await as('authenticated', T, `select data->0->>'name' as name from public.sahho_archive`); check('archive kept when not sent', r.rows?.[0]?.name === '2020', r);
+  r = await as('authenticated', T, `select public.save_sahho_state(4, $1::jsonb, '[{"name":"2021"}]'::jsonb) as v`, [doc('f')]); check('save with archives -> 5', r.rows?.[0]?.v === 5, r);
+  r = await as('authenticated', T, `select data->0->>'name' as name from public.sahho_archive`); check('archive replaced', r.rows?.[0]?.name === '2021', r);
+  r = await as('authenticated', T, `select public.save_sahho_state(4, $1::jsonb, '[{"name":"x"}]'::jsonb) as v`, [doc('g')]); check('stale save with archives rejected', r.error?.startsWith('40001'), r);
+  r = await as('authenticated', T, `select data->0->>'name' as name from public.sahho_archive`); check('rejected save leaves archive', r.rows?.[0]?.name === '2021', r);
+  r = await as('authenticated', O, 'select * from public.sahho_archive'); check('non-treasurer sees no archive', r.rows?.length === 0, r);
+  r = await as('anon', null, 'select * from public.sahho_archive'); check('anon denied archive', !!r.error, r);
+  r = await as('authenticated', T, 'delete from public.sahho_archive'); check('archive delete not permitted', !!r.error, r);
+  r = await as('authenticated', O, 'truncate public.sahho_archive'); check('archive truncate not permitted', !!r.error, r);
+  const role = await db.query<{ c: string[] }>(`select rolconfig as c from pg_roles where rolname = 'authenticated'`);
+  check('signed-in statement timeout raised', !!role.rows[0].c?.includes('statement_timeout=60s'), role.rows);
 });
