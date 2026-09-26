@@ -199,11 +199,32 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
   };
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "2025-09".."2026-09" -> "2025: Sep to Dec (4 months), 2026: Jan to Sep (9 months)"; gaps within a year are listed separately. */
+export function monthRanges(list: string[]): string {
+  const byYear = new Map<string, number[]>();
+  for (const m of [...new Set(list)].sort()) {
+    const [y, mm] = m.split('-');
+    byYear.set(y, [...(byYear.get(y) ?? []), Number(mm)]);
+  }
+  return [...byYear].map(([y, ms]) => {
+    const parts: string[] = [];
+    for (let i = 0; i < ms.length;) {
+      let j = i;
+      while (j + 1 < ms.length && ms[j + 1] === ms[j] + 1) j++;
+      parts.push(i === j ? MONTH_NAMES[ms[i] - 1] : `${MONTH_NAMES[ms[i] - 1]} to ${MONTH_NAMES[ms[j] - 1]}`);
+      i = j + 1;
+    }
+    return `${y}: ${parts.join(', ')} (${ms.length} month${ms.length === 1 ? '' : 's'})`;
+  }).join(', ');
+}
+
 export function outstandingReport(s: State, cutoff: string): Table {
   const ledger = new Ledger(s, cutoff);
   const rows = s.members.map(m => ledger.summary(m)).filter(x => x.outstanding > 0 || !x.member.start)
-    .map(x => [x.member.name, x.member.start ?? 'Not confirmed', rupees(x.outstanding), x.unpaid.length, x.partial.length, [...x.unpaid, ...x.partial].sort().join(' ')]);
-  return { title: `Outstanding contributions as of ${cutoff}`, columns: ['Member', 'Start month', 'Outstanding (₹)', 'Unpaid months', 'Partly paid', 'Months'], rows, note: `Months due through ${ledger.until} (a month falls due on day ${s.settings.dueDay}). Payments received after ${cutoff} are excluded. Members without a confirmed start month have no dues calculated.` };
+    .map(x => [x.member.name, x.member.start ?? 'Not confirmed', rupees(x.outstanding), x.unpaid.length, x.partial.length, monthRanges([...x.unpaid, ...x.partial])]);
+  return { title: `Outstanding contributions as of ${cutoff}`, columns: ['Member', 'Start month', 'Outstanding (₹)', 'Unpaid', 'Partly paid', 'Months'], rows, note: `Months due through ${ledger.until} (a month falls due on day ${s.settings.dueDay}). Payments received after ${cutoff} are excluded. Members without a confirmed start month have no dues calculated.` };
 }
 
 export function receivedByReceiptMonth(s: State, cutoff: string): Table {

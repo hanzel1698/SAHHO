@@ -36,7 +36,7 @@ export function Reports({ s, cutoff }: ScreenProps) {
         <button onClick={() => void exportXLSX(`sahho-reports-${cutoff}.xlsx`, [outstandingReport(s, cutoff), receivedByReceiptMonth(s, cutoff), allocatedByObligationMonth(s, cutoff), annualReport(s, cutoff), charityReport(s, cutoff), reconciliationReport(s)])}>Export all to Excel</button>
       </div>
       {kind === 'member' && <div className="toolbar no-print"><MemberSelect s={s} value={memberId} onChange={setMemberId} /></div>}
-      {table && <ReportTable table={table} />}
+      {table && <ReportTable table={table} compact nowrap={kind === 'outstanding'} />}
     </section>
   );
 }
