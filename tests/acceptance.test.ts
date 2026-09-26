@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { State } from '../src/model';
 import { decide, due, linkReversal, paid, planAllocation } from '../src/engine';
-import { Ledger, countedRows, dashboard, receivedByReceiptMonth } from '../src/reports';
+import { Ledger, countedRows, dashboard, monthRanges, receivedByReceiptMonth } from '../src/reports';
 import { backupText, parseBackup, validate } from '../src/storage';
 import { demoState, demoStatementCSV } from '../src/demo';
 import { csv, fixture, importCSV, row, rupees, upi } from './helpers';
@@ -225,5 +225,15 @@ describe('reversal matching', () => {
     expect(reversalCandidates(st.state, rev)[0].id).toBe(benny.id);
     expect(referencedOriginals(st.state, rev).map(r => r.id)).toEqual([benny.id]);
     expect(rev.reason).toMatch(/same bank reference/);
+  });
+});
+
+describe('outstanding report month ranges', () => {
+  it('groups months by year into ranges with counts', () => {
+    const list = ['2026-01', '2025-09', '2025-10', '2025-11', '2025-12', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
+    expect(monthRanges(list)).toBe('2025: Sep to Dec (4 months), 2026: Jan to Sep (9 months)');
+    expect(monthRanges(['2026-01', '2026-03', '2026-04'])).toBe('2026: Jan, Mar to Apr (3 months)');
+    expect(monthRanges(['2026-05'])).toBe('2026: May (1 month)');
+    expect(monthRanges([])).toBe('');
   });
 });

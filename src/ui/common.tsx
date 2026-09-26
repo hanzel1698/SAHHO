@@ -43,11 +43,11 @@ export async function exportXLSX(name: string, tables: Table[]) {
   XLSX.writeFile(book, name);
 }
 
-export function ReportTable({ table, limit = 500 }: { table: Table; limit?: number }) {
+export function ReportTable({ table, limit = 500, compact = false, nowrap = false }: { table: Table; limit?: number; compact?: boolean; nowrap?: boolean }) {
   const [all, setAll] = useState(false);
   const rows = all ? table.rows : table.rows.slice(0, limit);
   return (
-    <div className="report">
+    <div className={compact ? 'report compact' : 'report'}>
       <div className="report-head">
         <h3>{table.title}</h3>
         <div className="actions no-print">
@@ -58,7 +58,7 @@ export function ReportTable({ table, limit = 500 }: { table: Table; limit?: numb
       </div>
       {table.note && <p className="note">{table.note}</p>}
       <div className="table-wrap">
-        <table>
+        <table className={[compact && 'compact', nowrap && 'nowrap'].filter(Boolean).join(' ') || undefined}>
           <thead><tr>{table.columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
           <tbody>
             {rows.map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j} className={/\(₹\)/.test(table.columns[j]) ? 'num' : undefined}>{v}</td>)}</tr>)}
