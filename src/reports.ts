@@ -154,26 +154,48 @@ export function reconciliationStatus(s: State) {
 
 // ---------- Report tables ----------
 
-export type Table = { title: string; columns: string[]; rows: (string | number)[][]; note?: string };
+export type Table = {
+  title: string; columns: string[]; rows: (string | number)[][]; note?: string;
+  /** Optional per-row group number (parallel to rows); rows sharing a number are shown as one group. */
+  groups?: (number | undefined)[];
+};
 
 const rupees = (p: number) => (p / 100).toFixed(2);
 
 export function memberStatement(s: State, memberId: string, cutoff: string): Table {
   const m = s.members.find(x => x.id === memberId)!;
   const ledger = new Ledger(s, cutoff);
-  const rows: (string | number)[][] = [];
   const allocs = s.allocations.filter(a => a.memberId === memberId).sort((a, b) => a.month.localeCompare(b.month));
+  // One payment split across several months/types: same bank receipt, or (workbook only) same "Paid on" date and sheet.
+  const payKey = (a: Allocation) => a.receiptId ? `r|${a.receiptId}` : a.received ? `w|${a.received}|${a.source?.sheet ?? ''}` : undefined;
+  const parts = new Map<string, Allocation[]>();
+  for (const a of allocs) { const k = payKey(a); if (k) parts.set(k, [...parts.get(k) ?? [], a]); }
+  const received = (a: Allocation) => (a.receiptId ? ledger.receipts.get(a.receiptId)?.date : undefined) ?? a.received ?? '';
+  const splits = [...parts].filter(([, list]) => list.length > 1)
+    .sort(([, x], [, y]) => received(x[0]).localeCompare(received(y[0])) || x[0].month.localeCompare(y[0].month));
+  const splitNo = new Map(splits.map(([k], i) => [k, i + 1]));
+  const rows: (string | number)[][] = [];
+  const groups: (number | undefined)[] = [];
   for (const a of allocs) {
     const r = a.receiptId ? ledger.receipts.get(a.receiptId) : undefined;
     const active = allocationActive(s, a, cutoff, ledger.receipts);
-    rows.push([a.month, a.kind === 'joining' ? 'Joining contribution' : 'Regular', rupees(a.amount), r?.date ?? a.received ?? 'Unknown', r ? r.sender || r.narration.slice(0, 40) : a.legacy ? 'Workbook record (no linked receipt)' : '', active ? 'Counted' : a.reversedBy ? 'Reversed' : 'After cutoff / unconfirmed', a.note]);
+    const k = payKey(a), n = k ? splitNo.get(k) : undefined;
+    let split = '';
+    if (n) {
+      const list = parts.get(k!)!, whole = r?.credit || list.reduce((t, x) => t + x.amount, 0);
+      split = `#${n} · part ${list.indexOf(a) + 1} of ${list.length} · ${rupees(whole)} total`;
+    }
+    rows.push([a.month, a.kind === 'joining' ? 'Joining contribution' : 'Regular', rupees(a.amount), r?.date ?? a.received ?? 'Unknown', split, r ? r.sender || r.narration.slice(0, 40) : a.legacy ? 'Workbook record (no linked receipt)' : '', active ? 'Counted' : a.reversedBy ? 'Reversed' : 'After cutoff / unconfirmed', a.note]);
+    groups.push(n);
   }
   const sm = ledger.summary(m);
   return {
     title: `Member statement — ${m.name} (as of ${cutoff})`,
-    columns: ['Month', 'Type', 'Amount (₹)', 'Received', 'Paid by / source', 'Status', 'Note'],
+    columns: ['Month', 'Type', 'Amount (₹)', 'Received', 'Split payment', 'Paid by / source', 'Status', 'Note'],
     rows,
-    note: `Outstanding ${rupees(sm.outstanding)} · Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}`,
+    groups,
+    note: `Outstanding ${rupees(sm.outstanding)} · Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
+      (splits.length ? ` · Rows marked #1, #2 … under “Split payment” are parts of one amount received on that date.` : ''),
   };
 }
 

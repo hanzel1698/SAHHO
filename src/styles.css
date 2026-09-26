@@ -73,6 +73,13 @@ table.compact td, table.compact th { padding: 3px 6px; font-size: 13px; }
 td.narr, .narr { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; max-width: 440px; }
 .sticky { position: sticky; left: 0; background: #fff; z-index: 1; }
 thead .sticky { z-index: 3; background: #f0f2f5; }
+tr.split-a td { background: var(--info-bg); }
+tr.split-b td { background: var(--warn-bg); }
+tr.split td:first-child { box-shadow: inset 4px 0 0 var(--info); }
+tr.split-b td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
+tr.split-first td { border-top: 2px solid var(--dim); }
+tr.split-last td { border-bottom: 2px solid var(--dim); }
+tr.split td:nth-child(1), tr.split td:nth-child(4), tr.split td:nth-child(5) { white-space: nowrap; }
 tr.clickable:hover td, .clickable:hover { background: #f7faf9; cursor: pointer; }
 .empty { padding: 30px; text-align: center; color: var(--dim); background: var(--panel); border: 1px dashed var(--line); border-radius: 8px; }
 .welcome .lead { font-size: 16px; max-width: 760px; }

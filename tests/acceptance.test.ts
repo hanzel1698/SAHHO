@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { State } from '../src/model';
 import { decide, due, linkReversal, paid, planAllocation } from '../src/engine';
-import { Ledger, countedRows, dashboard, receivedByReceiptMonth } from '../src/reports';
+import { Ledger, countedRows, dashboard, memberStatement, receivedByReceiptMonth } from '../src/reports';
 import { backupText, parseBackup, validate } from '../src/storage';
 import { demoState, demoStatementCSV } from '../src/demo';
 import { csv, fixture, importCSV, row, rupees, upi } from './helpers';
@@ -66,6 +66,21 @@ describe('contribution rules', () => {
     const s = fixture();
     const st = importCSV(s, csv([row('10-09-2025', '10 Sep 2025', '600000000006', upi('600000000006', 'ASHA K', 'asha.k@oksbi'), '', '1,200.00', '11,200.00')]));
     expect(allocs(st.state, st.auto[0].id)).toEqual(['2025-03', '2025-04', '2025-05', '2025-06', '2025-07', '2025-08'].map(m => [m, 20000, 'regular']));
+  });
+
+  it('marks the parts of one split receipt as a group in the member statement', () => {
+    const s = fixture();
+    const st = importCSV(s, csv([row('10-09-2025', '10 Sep 2025', '600000000009', upi('600000000009', 'ASHA K', 'asha.k@oksbi'), '', '1,200.00', '11,200.00')]));
+    const asha = st.state.members.find(m => m.name === 'ASHA')!;
+    const t = memberStatement(st.state, asha.id, '2026-01-31');
+    const col = t.columns.indexOf('Split payment');
+    const parts = t.rows.filter(r => r[3] === '2025-09-10');
+    expect(parts).toHaveLength(6);
+    const n = t.groups![t.rows.indexOf(parts[0])]!;
+    expect(parts.map(r => t.groups![t.rows.indexOf(r)])).toEqual(Array(6).fill(n));
+    expect(parts[0][col]).toBe(`#${n} · part 1 of 6 · 1200.00 total`);
+    expect(parts[5][col]).toBe(`#${n} · part 6 of 6 · 1200.00 total`);
+    expect(new Set(t.groups!.filter(Boolean)).size).toBe(Math.max(...t.groups!.map(g => g ?? 0)));
   });
 
   it('respects rate changes by effective month and never over-allocates a receipt', () => {

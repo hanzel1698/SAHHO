@@ -43,6 +43,13 @@ export async function exportXLSX(name: string, tables: Table[]) {
   XLSX.writeFile(book, name);
 }
 
+/** Shading for grouped rows: alternating tints per group, with a bracket on the first and last row of each group. */
+function splitClass(groups: Table['groups'], i: number) {
+  const g = groups?.[i];
+  if (!g) return undefined;
+  return ['split', `split-${g % 2 ? 'a' : 'b'}`, groups![i - 1] !== g ? 'split-first' : '', groups![i + 1] !== g ? 'split-last' : ''].filter(Boolean).join(' ');
+}
+
 export function ReportTable({ table, limit = 500 }: { table: Table; limit?: number }) {
   const [all, setAll] = useState(false);
   const rows = all ? table.rows : table.rows.slice(0, limit);
@@ -61,7 +68,7 @@ export function ReportTable({ table, limit = 500 }: { table: Table; limit?: numb
         <table>
           <thead><tr>{table.columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
           <tbody>
-            {rows.map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j} className={/\(₹\)/.test(table.columns[j]) ? 'num' : undefined}>{v}</td>)}</tr>)}
+            {rows.map((r, i) => <tr key={i} className={splitClass(table.groups, i)}>{r.map((v, j) => <td key={j} className={/\(₹\)/.test(table.columns[j]) ? 'num' : undefined}>{v}</td>)}</tr>)}
             {!rows.length && <tr><td colSpan={table.columns.length} className="dim">No rows.</td></tr>}
           </tbody>
         </table>
