@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ScreenProps } from '../App';
 import { Category, Issue, Receipt, State, categories, contributionCategories, memberName, money, monthLabel } from '../model';
-import { createMember, decide, detachedFrom, linkReversal, linkWorkbookMonths, relinkDetached, removeDetached, unlinkedWorkbook, markDuplicate, months as monthRange, notDuplicate, planAllocation, referencedOriginals, resolveIssue, reversalCandidates, updateMember } from '../engine';
+import { createMember, decide, deleteManualReceipt, detachedFrom, linkReversal, linkWorkbookMonths, relinkDetached, removeDetached, unlinkedWorkbook, markDuplicate, months as monthRange, notDuplicate, planAllocation, referencedOriginals, resolveIssue, reversalCandidates, updateMember } from '../engine';
 import { signals } from '../matching';
 import { Badge, ErrorLine, MemberSelect, useAsync } from './common';
 
@@ -228,7 +228,11 @@ function IssueRow({ i, s, busy, run, store }: { i: Issue; s: State; busy: boolea
             <button disabled={busy} onClick={() => void run(() => store.commit(d => { updateMember(d, m.id, { inactiveFrom: '2000-01' }); resolveIssue(d, i.id, 'Marked as not a contributing member'); }))}>Not a contributing member</button>
           </>
         ) : (
-          <button disabled={busy} onClick={() => void run(() => store.commit(d => resolveIssue(d, i.id, 'Reviewed; kept as recorded')))}>Mark reviewed</button>
+          <>
+            <button disabled={busy} onClick={() => void run(() => store.commit(d => resolveIssue(d, i.id, 'Reviewed; kept as recorded')))}>Mark reviewed</button>
+            {i.receiptId && s.receipts.find(r => r.id === i.receiptId)?.manual && !s.receipts.find(r => r.id === i.receiptId)?.manual?.matched &&
+              <button disabled={busy} onClick={() => { if (confirm('Delete this manual entry and its month allocations?')) void run(() => store.commit(d => deleteManualReceipt(d, i.receiptId!))); }}>Delete manual entry</button>}
+          </>
         )}
       </div>
     </div>

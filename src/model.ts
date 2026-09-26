@@ -71,7 +71,22 @@ export interface Receipt {
   label?: string;        // workbook PAID BY/PAID FOR
   type?: string;         // workbook Type column
   remarks?: string;      // workbook Remarks column
+  manual?: ManualEntry;  // entered by the treasurer; awaits (or found) its bank statement row
 }
+
+/**
+ * A transaction the treasurer typed in before the bank statement showed it. It counts like any other
+ * record; the next statement import that contains it copies the bank narration and marks it reconciled.
+ */
+export interface ManualEntry {
+  entered: string;       // when it was typed in (ISO timestamp)
+  date: string;          // date as entered
+  narration: string;     // description as entered
+  reference?: string;    // reference as entered
+  matched?: { batch: string; file: string; at: string; row: number };
+}
+
+export const awaitingBank = (r: Receipt) => !!r.manual && !r.manual.matched && r.status !== 'duplicate';
 
 export interface Allocation {
   id: string;
@@ -154,6 +169,7 @@ export interface Batch {
   duplicates: number;
   review: number;
   auto?: number;
+  matched?: number;      // manual entries reconciled by this statement
   from?: string;
   to?: string;
   reconciliation: Reconciliation;

@@ -1,6 +1,6 @@
 // Obligations, allocation and review decisions. Pure functions over State (no UI).
 import { Allocation, Category, Member, Receipt, State, audit, contributionCategories, id, memberName, money, monthLabel, norm, today } from './model';
-import { matchCategory, matchMember, patternCategory, validateToken } from './matching';
+import { matchCategory, matchMember, patternCategory, senderOf, validateToken } from './matching';
 
 export function addMonth(month: string, n = 1) {
   const [y, m] = month.split('-').map(Number);
@@ -438,6 +438,59 @@ export function linkWorkbookMonths(s: State, receiptId: string, allocationIds: s
   r.duplicateOf = undefined;
   r.reason = `Linked by treasurer to workbook months ${list.map(a => monthLabel(a.month)).join(', ')}${total < r.credit ? `; ${money(r.credit - total)} kept as unapplied credit` : ''}`;
   audit(s, 'Workbook months linked', `${r.date} ${money(r.credit)} (${memberName(s, r.memberId)}) → ${list.map(a => `${monthLabel(a.month)} ${money(a.amount)}`).join(', ')}`, before, structuredClone(r));
+}
+
+// ---------- Manual entries ----------
+
+export const MANUAL_BATCH = 'manual';
+
+export interface ManualInput {
+  date: string;
+  narration: string;
+  credit: number;
+  debit: number;
+  reference?: string;
+  decision: Decision;
+}
+
+/**
+ * Record a transaction the bank statement does not show yet. It is confirmed and counted like any other
+ * record, and stays marked as awaiting the bank until a statement import finds the matching row.
+ */
+export function addManualReceipt(s: State, input: ManualInput) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || Number.isNaN(Date.parse(input.date))) throw Error('Enter the transaction date.');
+  const narration = input.narration.trim().replace(/\s+/g, ' ');
+  if (!narration) throw Error('Enter a description.');
+  const { credit, debit } = input;
+  if (!Number.isSafeInteger(credit) || !Number.isSafeInteger(debit) || credit < 0 || debit < 0 || (credit > 0) === (debit > 0)) throw Error('Enter an amount greater than zero.');
+  const reference = (input.reference ?? '').trim();
+  const r: Receipt = {
+    id: id(), date: input.date, valueDate: input.date, narration, sender: senderOf(narration), credit, debit, reference,
+    batch: MANUAL_BATCH, order: s.receipts.filter(x => x.batch === MANUAL_BATCH).length,
+    source: { file: 'Manual entry', row: 0, raw: {} },
+    category: 'Unclassified', status: 'review', reason: '', candidates: [],
+    manual: { entered: new Date().toISOString(), date: input.date, narration, reference: reference || undefined },
+  };
+  s.receipts.push(r);
+  decide(s, r.id, input.decision);
+  r.reason = `Entered manually; awaiting the bank statement${r.reason ? `. ${r.reason}` : ''}`;
+  audit(s, 'Manual entry added', `${r.date} ${money(credit || debit)} ${credit ? 'credit' : 'debit'}: ${narration}`, undefined, structuredClone(r));
+  return r;
+}
+
+/** Remove a manual entry that has not been matched to the bank yet (e.g. it was entered by mistake). */
+export function deleteManualReceipt(s: State, receiptId: string) {
+  const r = s.receipts.find(x => x.id === receiptId);
+  if (!r || !r.manual) throw Error('Only manual entries can be deleted.');
+  if (r.manual.matched) throw Error('This entry is already matched to a bank statement row and cannot be deleted.');
+  if (r.reversalOf || s.receipts.some(x => x.reversalOf === r.id || x.duplicateOf === r.id)) throw Error('Another transaction refers to this entry. Resolve that link first.');
+  const linked = s.allocations.filter(a => a.receiptId === r.id);
+  const workbook = linked.filter(isWorkbook);
+  for (const a of workbook) { a.receiptId = undefined; a.legacy = true; }
+  s.allocations = s.allocations.filter(a => a.receiptId !== r.id);
+  s.receipts = s.receipts.filter(x => x.id !== r.id);
+  for (const i of s.issues.filter(i => i.receiptId === r.id && !i.resolved)) { i.resolved = true; i.resolution = 'Manual entry deleted'; }
+  audit(s, 'Manual entry deleted', `${r.date} ${money(r.credit || r.debit)}: ${r.narration}${workbook.length ? ` (${workbook.length} workbook month(s) kept unlinked)` : ''}`, { receipt: structuredClone(r), allocations: structuredClone(linked) });
 }
 
 export function markDuplicate(s: State, receiptId: string, originalId?: string) {
