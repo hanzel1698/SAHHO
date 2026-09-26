@@ -71,4 +71,4 @@ test('Supabase migration: only treasurers can read/save, stale saves are refused
   r = await as('authenticated', O, 'truncate public.sahho_archive'); check('archive truncate not permitted', !!r.error, r);
   const role = await db.query<{ c: string[] }>(`select rolconfig as c from pg_roles where rolname = 'authenticated'`);
   check('signed-in statement timeout raised', !!role.rows[0].c?.includes('statement_timeout=60s'), role.rows);
-});
+}, 30_000); // PGlite start-up plus the full migration can exceed the 5s default when run alongside other suites.
