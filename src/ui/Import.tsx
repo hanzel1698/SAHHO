@@ -103,6 +103,7 @@ function StagedPreview({ staged, s, onCommit, onCancel, busy }: { staged: Staged
         <div className="stat"><div className="stat-label">Period</div><div className="stat-value">{b.from} → {b.to}</div></div>
         <div className="stat good"><div className="stat-label">Recorded automatically</div><div className="stat-value">{staged.auto.length}</div></div>
         <div className={staged.review.length ? 'stat warn' : 'stat'}><div className="stat-label">For your review</div><div className="stat-value">{staged.review.length}</div></div>
+        {staged.matched.length > 0 && <div className="stat good"><div className="stat-label">Matched to manual entries</div><div className="stat-value">{staged.matched.length}</div></div>}
         <div className="stat"><div className="stat-label">Already recorded (skipped)</div><div className="stat-value">{staged.skipped.length}</div></div>
         <div className={staged.invalid.length ? 'stat bad' : 'stat'}><div className="stat-label">Invalid rows</div><div className="stat-value">{staged.invalid.length}</div></div>
       </div>
@@ -112,6 +113,14 @@ function StagedPreview({ staged, s, onCommit, onCancel, busy }: { staged: Staged
         <button className="primary" disabled={busy} onClick={onCommit}>Commit import</button>
         <button onClick={onCancel}>Cancel</button>
       </div>
+      {staged.matched.length > 0 && <>
+        <h4>Manual entries found in this statement — reconciled</h4>
+        <p className="note">These were typed in earlier. The bank narration below replaces the description you entered; the category, member and months stay as you recorded them.</p>
+        <table className="compact">
+          <thead><tr><th>Bank date</th><th>Amount</th><th>Bank narration</th><th>Entered as</th><th>Recorded as</th></tr></thead>
+          <tbody>{staged.matched.map(x => <tr key={x.entry.id}><td>{x.row.date}</td><td className="num">{money(x.row.credit || -x.row.debit)}</td><td className="narr">{x.row.narration}</td><td className="dim">{x.before.date} · {x.before.narration}</td><td>{x.entry.category}{x.entry.memberId && <> — <b>{memberName(s, x.entry.memberId)}</b><div className="dim">{monthsFor(x.entry.id)}</div></>}</td></tr>)}</tbody>
+        </table>
+      </>}
       <h4>Recorded automatically</h4>
       <table className="compact">
         <thead><tr><th>Date</th><th>Amount</th><th>Narration</th><th>Recorded as</th><th>Why</th></tr></thead>

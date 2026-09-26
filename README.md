@@ -58,6 +58,13 @@ What migration does:
 
 **Undo:** *Backup & settings → Undo last import* shows what will be removed. If you made changes after the import, those are listed and you must confirm them; changes that involve the imported transactions (e.g. allocating one of them) are undone with it, other changes are kept.
 
+**Manual entries:** when something must be recorded before the statement shows it (a cash deposit, a cheque), use *Transactions → + Add manual entry*. Choose the date, direction, amount, description, category and (for contributions) member and months; an optional bank reference makes matching stricter. The entry counts straight away and is marked **manual · awaiting bank**.
+
+- On every later statement import, a row with the same amount and direction dated within 7 days of the entry (and containing its reference, if one was typed) is taken as that entry: the bank's narration, dates, reference and balance are copied onto it and it is marked **reconciled**. The row is not imported a second time, and the category, member and months stay as you recorded them. The preview lists these under *Manual entries found in this statement*.
+- If several entries could match, the one with the reference, then the member the bank row points to, then the nearest date wins.
+- If a statement covers an entry's date but has no matching row, *Needs your review* lists it (*Manual entry not found in bank statement*). An entry still awaiting the bank can be deleted from Transactions or from that review item.
+- Undoing the import puts matched entries back to *awaiting bank* with what you originally typed.
+
 ## 4. How contributions are allocated (default policy)
 
 For a confidently identified payment:

@@ -145,7 +145,8 @@ export function parseBackup(text: string): State {
 export function undoPreview(s: State) {
   if (!s.undo) return undefined;
   const batch = s.batches.find(b => b.id === s.undo!.batchId);
-  const receipts = s.receipts.filter(r => r.batch === s.undo!.batchId);
+  const added = new Set(s.undo.changes.added.receipts);
+  const receipts = s.receipts.filter(r => r.batch === s.undo!.batchId && added.has(r.id)); // manual entries it matched are restored, not removed
   const ids = new Set(receipts.map(r => r.id));
   return {
     batch,

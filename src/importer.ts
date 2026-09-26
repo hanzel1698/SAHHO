@@ -1,9 +1,9 @@
 // Bank statement parsing, duplicate detection and staged (all-or-nothing) import.
 import * as XLSX from 'xlsx';
-import { Batch, Mapping, Receipt, Reconciliation, State, audit, id, money, norm } from './model';
+import { Batch, Mapping, Receipt, Reconciliation, State, audit, awaitingBank, id, money, norm } from './model';
 import { processReceipt } from './engine';
 import { changesBetween } from './storage';
-import { senderOf } from './matching';
+import { matchMember, senderOf } from './matching';
 
 /** Strip Excel text wrappers such as ="123" and surrounding whitespace. */
 export function clean(v: unknown) {
@@ -294,6 +294,43 @@ export function findDuplicate(existing: Receipt[], r: Receipt, used: Set<string>
   return {};
 }
 
+/** How far apart (days) a manual entry and its bank statement row may be dated. */
+export const MANUAL_MATCH_DAYS = 7;
+
+const refText = (x: string) => x.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
+/**
+ * The manual entry an incoming statement row stands for: same amount and direction, dated within
+ * MANUAL_MATCH_DAYS, and — when the treasurer typed a reference — carrying that reference. Best first:
+ * reference found, member the bank row points to, nearest date, earliest entered.
+ */
+export function findManualMatch(s: State, pool: Receipt[], r: Receipt, used: Set<string>): Receipt | undefined {
+  const bankText = refText(`${r.reference} ${r.narration}`);
+  const days = (x: Receipt) => Math.min(dayDiff(x.date, r.date), dayDiff(x.date, r.valueDate));
+  const candidates = pool.filter(x => !used.has(x.id) && x.credit === r.credit && x.debit === r.debit && days(x) <= MANUAL_MATCH_DAYS &&
+    (!x.manual?.reference || refText(x.manual.reference).length < 4 || bankText.includes(refText(x.manual.reference))));
+  if (!candidates.length) return undefined;
+  const member = r.credit && candidates.some(x => x.memberId) ? matchMember(s, r).memberId : undefined;
+  const score = (x: Receipt) => (x.manual?.reference && refText(x.manual.reference).length >= 4 ? 1000 : 0) + (member && x.memberId === member ? 100 : 0) - days(x);
+  return candidates.sort((a, b) => score(b) - score(a) || a.manual!.entered.localeCompare(b.manual!.entered))[0];
+}
+
+/** Reconcile a manual entry with its bank row: the bank's narration and details replace what was typed. */
+export function applyBankRow(s: State, entry: Receipt, r: Receipt, batchId: string, file: string) {
+  const oldDate = entry.date;
+  entry.manual = { ...entry.manual!, matched: { batch: batchId, file, at: new Date().toISOString(), row: r.source.row } };
+  Object.assign(entry, {
+    narration: r.narration, sender: r.sender, reference: r.reference || entry.reference, date: r.date, valueDate: r.valueDate,
+    balance: r.balance, source: r.source, batch: batchId, order: r.order,
+  });
+  for (const a of s.allocations) if (a.receiptId === entry.id && !a.source?.sheet && a.received === oldDate) a.received = r.date;
+  const note = `matched to bank statement ${file} row ${r.source.row}; bank narration copied`;
+  entry.reason = /awaiting the bank statement/.test(entry.reason) ? entry.reason.replace('awaiting the bank statement', note) : `${entry.reason ? `${entry.reason}. ` : ''}Entered manually; ${note}`;
+  for (const i of s.issues.filter(i => i.receiptId === entry.id && i.kind === MANUAL_MISSING && !i.resolved)) { i.resolved = true; i.resolution = `Found in ${file}`; }
+}
+
+export const MANUAL_MISSING = 'Manual entry not found in bank statement';
+
 export async function hash(data: ArrayBuffer) {
   const bytes = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
@@ -305,6 +342,7 @@ export interface StagedImport {
   auto: Receipt[];
   review: Receipt[];
   skipped: { row: Receipt; original: Receipt }[];
+  matched: { row: Receipt; entry: Receipt; before: Receipt }[];
   invalid: InvalidRow[];
 }
 
@@ -316,15 +354,26 @@ export function stageStatement(current: State, table: Table, file: string, diges
   const batchId = id();
   const { receipts, invalid } = parseRows(table, file, batchId);
   if (!receipts.length && !invalid.length) throw Error('No transactions were found in this file.');
-  const existing = s.receipts.slice();
+  // Manual entries still awaiting the bank are matched separately, never treated as earlier bank rows.
+  const existing = s.receipts.filter(x => !awaitingBank(x));
+  const manual = s.receipts.filter(awaitingBank);
   const used = new Set<string>();
   const skipped: StagedImport['skipped'] = [];
+  const matched: StagedImport['matched'] = [];
   const kept: Receipt[] = [];
   const chronological = [...receipts].sort((a, b) => a.order - b.order);
   if (chronological.length > 1 && chronological[0].date > chronological.at(-1)!.date) chronological.reverse();
   for (const r of chronological) {
     const dup = findDuplicate(existing, r, used);
     if (dup.confirmed) { used.add(dup.confirmed.id); skipped.push({ row: r, original: dup.confirmed }); continue; }
+    const entry = findManualMatch(s, manual, r, used);
+    if (entry) {
+      used.add(entry.id);
+      const before = structuredClone(entry);
+      applyBankRow(s, entry, r, batchId, file);
+      matched.push({ row: r, entry, before });
+      continue;
+    }
     s.receipts.push(r);
     kept.push(r);
     if (dup.candidate) {
@@ -345,16 +394,23 @@ export function stageStatement(current: State, table: Table, file: string, diges
     s.issues.push({ id: id(), kind: 'Reconciliation difference', reason: `${file}: ${reconciliation.difference ? `opening + credits − debits differs from closing by ${money(reconciliation.difference)}. ` : ''}${reconciliation.rowIssues.slice(0, 5).join('; ')}`, resolved: false });
   }
   const dates = receipts.map(r => r.date).sort();
+  // Manual entries this statement should have shown (it covers their date plus the matching window) but did not.
+  const coveredUntil = dates.length ? new Date(Date.parse(dates.at(-1)!) - MANUAL_MATCH_DAYS * 86400000).toISOString().slice(0, 10) : '';
+  for (const x of manual) {
+    if (used.has(x.id) || x.date < dates[0] || x.date > coveredUntil || s.issues.some(i => i.receiptId === x.id && i.kind === MANUAL_MISSING && !i.resolved)) continue;
+    s.issues.push({ id: id(), kind: MANUAL_MISSING, receiptId: x.id, resolved: false,
+      reason: `${x.date} ${money(x.credit || x.debit)} ${x.credit ? 'credit' : 'debit'} “${x.narration}” was entered manually, but ${file} (${dates[0]} to ${dates.at(-1)}) has no row with the same amount within ${MANUAL_MATCH_DAYS} days. Check the entry, or delete it from Transactions if it was a mistake.` });
+  }
   const auto = kept.filter(r => r.status === 'confirmed');
   const review = kept.filter(r => r.status === 'review');
   const batch: Batch = {
     id: batchId, file, hash: digest, at: new Date().toISOString(), kind: 'statement',
-    imported: kept.length, duplicates: skipped.length, review: review.length + invalid.length, auto: auto.length,
+    imported: kept.length, duplicates: skipped.length, review: review.length + invalid.length, auto: auto.length, matched: matched.length,
     from: dates[0], to: dates.at(-1), reconciliation,
   };
   s.batches.push(batch);
   s.mappings[table.signature] = table.mapping;
-  audit(s, 'Statement imported', `${file}: ${kept.length} new (${auto.length} automatic, ${review.length} for review), ${skipped.length} already recorded, ${invalid.length} invalid rows`);
+  audit(s, 'Statement imported', `${file}: ${kept.length} new (${auto.length} automatic, ${review.length} for review), ${matched.length} matched to manual entries, ${skipped.length} already recorded, ${invalid.length} invalid rows`);
   s.undo = { batchId, revision: current.revision + 1, auditCount: s.audit.length, changes: changesBetween(current, s) };
-  return { state: s, batch, auto, review, skipped, invalid };
+  return { state: s, batch, auto, review, skipped, matched, invalid };
 }
