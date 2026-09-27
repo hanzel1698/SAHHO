@@ -1,6 +1,6 @@
 // Obligations, allocation and review decisions. Pure functions over State (no UI).
 import { Allocation, Category, Member, Receipt, State, audit, contributionCategories, id, memberName, money, monthLabel, norm, today } from './model';
-import { matchCategory, matchMember, patternCategory, senderOf, validateToken } from './matching';
+import { matchCategory, matchMember, patternCategory, pruneEvidence, senderOf, validateToken } from './matching';
 
 export function addMonth(month: string, n = 1) {
   const [y, m] = month.split('-').map(Number);
@@ -340,6 +340,10 @@ export function decide(s: State, receiptId: string, d: Decision) {
   audit(s, removed.length ? 'Transaction corrected' : 'Review approved',
     `${r.date} ${money(r.credit || r.debit)} → ${d.category}${d.memberId ? ` / ${s.members.find(m => m.id === d.memberId)?.name}` : ''}`,
     before, { receipt: structuredClone(r), allocations: s.allocations.filter(a => a.receiptId === r.id) });
+  // A correction takes this payment away from the rules that learned it for the old member or category.
+  for (const rule of pruneEvidence(s, s.rules.filter(x => x.evidence.includes(r.id)))) {
+    audit(s, 'Rule disabled', `${rule.token} → ${rule.memberId ? memberName(s, rule.memberId) : rule.category}: its only supporting payment (${r.date}) was corrected`);
+  }
 }
 
 const isWorkbook = (a: Allocation) => !!a.source?.sheet;

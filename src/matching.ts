@@ -68,31 +68,80 @@ export function trainRules(s: State) {
       }
     }
   }
+  const byId = new Map(s.receipts.map(r => [r.id, r]));
+  const learned = new Set<Rule>();
   const upsert = (token: string, target: { memberId?: string; category?: Category }, evidence: string[], validated: boolean, note: string) => {
     const existing = s.rules.find(r => r.token === token && r.memberId === target.memberId && r.category === target.category);
     if (existing) {
-      existing.evidence = [...new Set([...existing.evidence, ...evidence])];
+      learned.add(existing);
+      existing.evidence = [...new Set([...evidence, ...existing.evidence.filter(x => supports(existing, byId.get(x)))])];
       if (existing.origin === 'history') { existing.validated = validated; existing.note = note; }
       return;
     }
-    s.rules.push({ id: id(), token, ...target, enabled: true, evidence, validated, origin: 'history', note });
+    const rule: Rule = { id: id(), token, ...target, enabled: true, evidence, validated, origin: 'history', note };
+    learned.add(rule);
+    s.rules.push(rule);
   };
   for (const [token, byMember] of identity) {
     const unique = byMember.size === 1;
-    const strong = token.startsWith('UPI:') || token.startsWith('ACCT:');
     for (const [memberId, evidence] of byMember) {
-      const validated = unique && evidence.length >= (strong ? 1 : 2);
-      upsert(token, { memberId }, evidence, validated,
-        unique ? `${evidence.length} confirmed payment(s) for this member only` : `Conflict: this sender has paid for ${byMember.size} members`);
+      upsert(token, { memberId }, evidence, unique && enough(token, evidence.length, true),
+        unique ? uniqueNote(evidence.length, true) : `Conflict: this sender has paid for ${byMember.size} members`);
     }
   }
   for (const [token, byCat] of category) {
     const unique = byCat.size === 1;
     for (const [cat, evidence] of byCat) {
-      upsert(token, { category: cat }, evidence, unique && evidence.length >= 2,
-        unique ? `${evidence.length} confirmed debit(s) with this category` : 'Conflict: payee used for several categories');
+      upsert(token, { category: cat }, evidence, unique && enough(token, evidence.length, false),
+        unique ? uniqueNote(evidence.length, false) : 'Conflict: payee used for several categories');
     }
   }
+  pruneEvidence(s, s.rules.filter(r => !learned.has(r)));
+}
+
+/** Enough confirmed history for a learned rule to act on its own: one payment for a UPI ID or account, otherwise two. */
+const enough = (token: string, n: number, identity: boolean) =>
+  n >= (identity && (token.startsWith('UPI:') || token.startsWith('ACCT:')) ? 1 : 2);
+const uniqueNote = (n: number, identity: boolean) =>
+  identity ? `${n} confirmed payment(s) for this member only` : `${n} confirmed debit(s) with this category`;
+
+/** Does this transaction (still) back the rule: confirmed, for the rule's member or category, and matching its token? */
+function supports(rule: Rule, r: Receipt | undefined) {
+  if (!r || r.status !== 'confirmed' || !ruleMatches(rule, r.narration)) return false;
+  return rule.memberId
+    ? r.credit > 0 && r.memberId === rule.memberId && (r.category === 'Member contribution' || r.category === 'Joining contribution')
+    : r.debit > 0 && r.category === rule.category;
+}
+
+/**
+ * Drop evidence that no longer backs its rule, e.g. a payment corrected to another member. A learned rule left
+ * with no evidence is disabled so it stops sending that sender's payments to review. Returns the rules disabled.
+ */
+export function pruneEvidence(s: State, rules = s.rules): Rule[] {
+  const byId = new Map(s.receipts.map(r => [r.id, r]));
+  const disabled: Rule[] = [];
+  for (const rule of rules) {
+    const kept = rule.evidence.filter(x => supports(rule, byId.get(x)));
+    if (kept.length === rule.evidence.length) continue;
+    rule.evidence = kept;
+    if (!kept.length && rule.origin === 'history' && rule.enabled) {
+      rule.enabled = false;
+      rule.validated = false;
+      rule.note = 'Disabled: no confirmed payment supports it any more';
+      disabled.push(rule);
+    }
+  }
+  // A token left pointing at a single member or category is no longer a conflict.
+  for (const token of new Set(disabled.map(r => r.token))) {
+    for (const identity of [true, false]) {
+      const left = s.rules.filter(x => x.token === token && x.enabled && (identity ? x.memberId : x.category));
+      const [only] = left;
+      if (left.length !== 1 || only.origin !== 'history') continue;
+      only.validated = enough(token, only.evidence.length, identity);
+      only.note = uniqueNote(only.evidence.length, identity);
+    }
+  }
+  return disabled;
 }
 
 export interface MatchResult {

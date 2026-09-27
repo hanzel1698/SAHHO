@@ -5,7 +5,8 @@ import { decide, due, linkReversal, paid, planAllocation } from '../src/engine';
 import { Ledger, countedRows, dashboard, memberStatement, monthRanges, receivedByReceiptMonth } from '../src/reports';
 import { backupText, parseBackup, validate } from '../src/storage';
 import { demoState, demoStatementCSV } from '../src/demo';
-import { csv, fixture, importCSV, row, rupees, upi } from './helpers';
+import { matchMember, trainRules } from '../src/matching';
+import { csv, fixture, importCSV, pay, receipt, row, rupees, upi } from './helpers';
 
 const member = (s: State, name: string) => s.members.find(m => m.name === name)!;
 const allocs = (s: State, receiptId: string) => s.allocations.filter(a => a.receiptId === receiptId).map(a => [a.month, a.amount, a.kind]);
@@ -250,5 +251,52 @@ describe('outstanding report month ranges', () => {
     expect(monthRanges(['2026-01', '2026-03', '2026-04'])).toBe('2026: Jan, Mar to Apr (3 months)');
     expect(monthRanges(['2026-05'])).toBe('2026: May (1 month)');
     expect(monthRanges([])).toBe('');
+  });
+});
+
+describe('rule evidence after corrections', () => {
+  // ASHA K always pays for ASHA; one of her payments was once recorded for BENNY by mistake.
+  const misassigned = () => {
+    const s = fixture();
+    const r = receipt(s, '2025-03-05', upi('500000000020', 'ASHA K', 'asha.k@oksbi'), rupees(200));
+    pay(s, 'BENNY', r);
+    r.category = 'Member contribution';
+    trainRules(s);
+    const benny = member(s, 'BENNY').id;
+    const stale = () => s.rules.filter(x => x.memberId === benny && x.token.includes('ASHA'));
+    return { s, r, stale };
+  };
+  const next = (s: State) => receipt(s, '2025-04-05', upi('500000000021', 'ASHA K', 'asha.k@oksbi'), rupees(200), 0, { status: 'review' });
+
+  it('correcting the payment disables the rules it alone supported, so the sender stops conflicting', () => {
+    const { s, r, stale } = misassigned();
+    expect(stale().length).toBe(2);
+    expect(matchMember(s, next(s)).reason).toMatch(/Ambiguous third-party/);
+    decide(s, r.id, { memberId: member(s, 'ASHA').id, category: 'Member contribution' });
+    expect(stale().every(x => !x.enabled && !x.evidence.length)).toBe(true);
+    expect(s.audit.filter(a => a.action === 'Rule disabled').length).toBe(2);
+    expect(matchMember(s, next(s)).memberId).toBe(member(s, 'ASHA').id);
+    validate(s);
+  });
+
+  it('relearning drops evidence that moved to another member and disables rules left without any', () => {
+    const { s, r, stale } = misassigned();
+    // An older correction that did not tidy the rules: the payment is ASHA's, BENNY's rules still cite it.
+    s.allocations.filter(a => a.receiptId === r.id).forEach(a => { a.memberId = member(s, 'ASHA').id; });
+    r.memberId = member(s, 'ASHA').id;
+    trainRules(s);
+    expect(stale().every(x => !x.enabled && !x.evidence.length)).toBe(true);
+    const asha = s.rules.find(x => x.token === 'UPI:**ASHA.K@OKSBI' && x.memberId === member(s, 'ASHA').id)!;
+    expect(asha).toMatchObject({ enabled: true, validated: true });
+    expect(asha.evidence).toContain(r.id);
+    expect(matchMember(s, next(s)).memberId).toBe(member(s, 'ASHA').id);
+  });
+
+  it('keeps a genuine shared payer as a conflict', () => {
+    const s = fixture();
+    trainRules(s);
+    const uncle = s.rules.filter(x => x.token === 'SENDER:UNCLE SAM');
+    expect(uncle.length).toBe(2);
+    expect(uncle.every(x => x.enabled && x.evidence.length === 1)).toBe(true);
   });
 });

@@ -11,7 +11,8 @@ export function Rules({ s, store }: ScreenProps) {
   const [testing, setTesting] = useState<string>();
   const [draft, setDraft] = useState({ token: 'UPI:', memberId: '', category: '' as Category | '' });
   const { busy, error, run } = useAsync();
-  const conflicts = new Set(s.rules.filter(r => r.memberId && s.rules.some(x => x !== r && x.token === r.token && x.memberId && x.memberId !== r.memberId)).map(r => r.id));
+  // Only enabled rules can send a payment to review, so a disabled rule never makes a sender conflicting.
+  const conflicts = new Set(s.rules.filter(r => r.enabled && r.memberId && s.rules.some(x => x !== r && x.enabled && x.token === r.token && x.memberId && x.memberId !== r.memberId)).map(r => r.id));
   const rules = s.rules.filter(r => (!q || norm(r.token + ' ' + memberName(s, r.memberId) + ' ' + (r.category ?? '')).includes(norm(q))) &&
     (show === 'all' || (show === 'member' ? !!r.memberId : show === 'category' ? !!r.category : conflicts.has(r.id))))
     .sort((a, b) => a.token.localeCompare(b.token));
