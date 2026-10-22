@@ -163,14 +163,13 @@ details { margin: 8px 0; }
   thead th { position: static; }
   .report-summary, .summary-item, table.bordered, table.bordered th, tr.split td, tr.due td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .report-summary { break-inside: avoid; }
-  /* The frame belongs to the table so its edges always meet the row lines; long references and split notes wrap so it fits the page. */
+  /* The frame belongs to the table so its edges always meet the row lines; long references wrap so it fits the page. */
   .table-wrap.bordered { border: none; }
   table.bordered { border: 1px solid #98a2b3; }
   table.bordered td.break { overflow-wrap: anywhere; }
   table.bordered td.short { white-space: nowrap; }
   table.bordered td, table.bordered th { padding: 4px 5px; }
   table.bordered th:last-child { width: 26%; }
-  table.bordered tr.split td:nth-child(5) { white-space: normal; }
   table.bordered tr { break-inside: avoid; }
 }
 .signin { max-width: 360px; margin: 10vh auto; display: flex; flex-direction: column; gap: 12px; }

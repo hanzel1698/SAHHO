@@ -79,8 +79,8 @@ describe('contribution rules', () => {
     expect(parts).toHaveLength(6);
     const n = t.groups![t.rows.indexOf(parts[0])]!;
     expect(parts.map(r => t.groups![t.rows.indexOf(r)])).toEqual(Array(6).fill(n));
-    expect(parts[0][col]).toBe(`#${n} · part 1 of 6 · 1200.00 total`);
-    expect(parts[5][col]).toBe(`#${n} · part 6 of 6 · 1200.00 total`);
+    expect(parts[0][col]).toBe(`#${n}, 200/1200(1)`);
+    expect(parts[5][col]).toBe(`#${n}, 200/1200(6)`);
     expect(new Set(t.groups!.filter(Boolean)).size).toBe(Math.max(...t.groups!.map(g => g ?? 0)));
   });
 

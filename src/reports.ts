@@ -169,6 +169,8 @@ export type Table = {
 export type SummaryItem = { label: string; value: string; detail?: string; tone?: 'bad' | 'warn' | 'good' };
 
 const rupees = (p: number) => (p / 100).toFixed(2);
+/** Rupees without ".00" for whole amounts: 20000 -> "200", 12550 -> "125.50". */
+const shortRupees = (p: number) => (p / 100).toFixed(p % 100 ? 2 : 0);
 
 export function memberStatement(s: State, memberId: string, cutoff: string): Table {
   const m = s.members.find(x => x.id === memberId)!;
@@ -191,7 +193,7 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
     let split = '';
     if (n) {
       const list = parts.get(k!)!, whole = r?.credit || list.reduce((t, x) => t + x.amount, 0);
-      split = `#${n} · part ${list.indexOf(a) + 1} of ${list.length} · ${rupees(whole)} total`;
+      split = `#${n}, ${shortRupees(a.amount)}/${shortRupees(whole)}(${list.indexOf(a) + 1})`; // payment #, this part / whole payment (part no.)
     }
     rows.push([a.month, a.kind === 'joining' ? 'Joining contribution' : 'Regular', rupees(a.amount), r?.date ?? a.received ?? 'Unknown', split, r ? r.sender || r.narration.slice(0, 40) : a.legacy ? 'Workbook record (no linked receipt)' : '', active ? 'Counted' : a.reversedBy ? 'Reversed' : 'After cutoff / unconfirmed', a.note]);
     groups.push(n);
@@ -228,7 +230,7 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
     tones,
     summary,
     note: `Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
-      (splits.length ? ` · Rows marked #1, #2 … under “Split payment” are parts of one amount received on that date.` : ''),
+      (splits.length ? ` · Split payment “#1, 200/400(1)” = payment #1, ₹200 of ₹400, part 1.` : ''),
   };
 }
 
