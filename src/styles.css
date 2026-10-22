@@ -125,6 +125,13 @@ table.bordered thead th:last-child { box-shadow: inset 0 -2px 0 #98a2b3; }
 table.bordered tr.split-first td { border-top: 2px solid var(--dim); }
 table.bordered tr.split-last td { border-bottom: 2px solid var(--dim); }
 .report .actions { margin: 0; }
+.report .actions button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.print-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; background: var(--info-bg); border: 1px solid #c3d4ee; border-radius: 8px; padding: 8px 12px; margin: 6px 0 8px; }
+.print-pick-title { font-weight: 600; color: var(--info); }
+.print-pick label.inline { color: var(--ink); font-size: 13px; }
+.print-pick .actions { margin-left: auto; }
+/* While choosing, columns that will be left out of the printout are greyed out as a preview. */
+table.picking .print-hide { opacity: .3; }
 .grid-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-height: 72vh; }
 table.grid td.gc { min-width: 46px; text-align: center; cursor: pointer; padding: 5px 3px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 table.grid th, table.grid td { border: 1px solid #000; }
@@ -149,7 +156,7 @@ details { margin: 8px 0; }
   main { padding: 10px; }
 }
 @media print {
-  .no-print, .nav, .banner { display: none !important; }
+  .no-print, .nav, .banner, .print-hide { display: none !important; }
   .app { display: block; }
   .table-wrap, .grid-wrap { max-height: none; overflow: visible; border: none; }
   body { background: #fff; font-size: 11px; }

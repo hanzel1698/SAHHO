@@ -108,9 +108,30 @@ function splitClass(groups: Table['groups'], i: number) {
   return ['split', `split-${g % 2 ? 'a' : 'b'}`, groups![i - 1] !== g ? 'split-first' : '', groups![i + 1] !== g ? 'split-last' : ''].filter(Boolean).join(' ');
 }
 
+const PRINT_COLUMNS_KEY = 'sahho-print-hidden-columns';
+
+/** Columns left out of printouts, remembered in this browser per table layout (its column list). */
+function usePrintHidden(columns: string[]) {
+  const layout = columns.join('|');
+  const [saved, setSaved] = useState<Record<string, string[]>>(() => {
+    try { return JSON.parse(localStorage.getItem(PRINT_COLUMNS_KEY) ?? '{}') ?? {}; } catch { return {}; }
+  });
+  const hidden = (saved[layout] ?? []).filter(c => columns.includes(c));
+  const setHidden = (list: string[]) => {
+    const next = { ...saved, [layout]: list };
+    setSaved(next);
+    try { localStorage.setItem(PRINT_COLUMNS_KEY, JSON.stringify(next)); } catch { /* not remembered; still applies for now */ }
+  };
+  return [hidden, setHidden] as const;
+}
+
 export function ReportTable({ table, limit = 500, compact = false, nowrap = false, bordered = false }: { table: Table; limit?: number; compact?: boolean; nowrap?: boolean; bordered?: boolean }) {
   const [all, setAll] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [hidden, setHidden] = usePrintHidden(table.columns);
   const rows = all ? table.rows : table.rows.slice(0, limit);
+  const printClass = (j: number) => hidden.includes(table.columns[j]) ? 'print-hide' : undefined;
+  const toggle = (c: string) => setHidden(hidden.includes(c) ? hidden.filter(x => x !== c) : [...hidden, c]);
   return (
     <div className={compact ? 'report compact' : 'report'}>
       <div className="report-head">
@@ -118,9 +139,24 @@ export function ReportTable({ table, limit = 500, compact = false, nowrap = fals
         <div className="actions no-print">
           <button onClick={() => download(`${table.title.replace(/\W+/g, '-')}.csv`, '\uFEFF' + toCSV(table), 'text/csv')}>CSV</button>
           <button onClick={() => void exportXLSX(`${table.title.replace(/\W+/g, '-')}.xlsx`, [table])}>Excel</button>
-          <button onClick={() => window.print()}>Print</button>
+          <button className={picking ? 'on' : undefined} onClick={() => setPicking(!picking)}>Print…</button>
         </div>
       </div>
+      {picking && (
+        <div className="print-pick no-print">
+          <span className="print-pick-title">Columns to print</span>
+          {table.columns.map(c => (
+            <label key={c} className="inline">
+              <input type="checkbox" checked={!hidden.includes(c)} disabled={!hidden.includes(c) && hidden.length === table.columns.length - 1} onChange={() => toggle(c)} />{c}
+            </label>
+          ))}
+          <div className="actions">
+            {hidden.length > 0 && <button className="link" onClick={() => setHidden([])}>Select all</button>}
+            <button className="primary" onClick={() => { window.print(); setPicking(false); }}>Print {table.columns.length - hidden.length} of {table.columns.length} columns</button>
+            <button onClick={() => setPicking(false)}>Close</button>
+          </div>
+        </div>
+      )}
       {table.summary && (
         <div className="report-summary">
           {table.summary.map(x => (
@@ -134,10 +170,10 @@ export function ReportTable({ table, limit = 500, compact = false, nowrap = fals
       )}
       {table.note && <p className="note">{table.note}</p>}
       <div className={cx('table-wrap', bordered && 'bordered')}>
-        <table className={cx(compact && 'compact', nowrap && 'nowrap', bordered && 'bordered') || undefined}>
-          <thead><tr>{table.columns.map(c => <th key={c} className={table.center?.includes(c) ? 'center' : undefined}>{c}</th>)}</tr></thead>
+        <table className={cx(compact && 'compact', nowrap && 'nowrap', bordered && 'bordered', picking && 'picking') || undefined}>
+          <thead><tr>{table.columns.map((c, j) => <th key={c} className={cx(table.center?.includes(c) && 'center', printClass(j)) || undefined}>{c}</th>)}</tr></thead>
           <tbody>
-            {rows.map((r, i) => <tr key={i} className={cx(splitClass(table.groups, i), table.tones?.[i] === 'bad' && 'due') || undefined}>{r.map((v, j) => <td key={j} className={cx(/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) && 'center', /\S{16,}/.test(String(v)) ? 'break' : String(v).length <= 15 && 'short') || undefined}>{v}</td>)}</tr>)}
+            {rows.map((r, i) => <tr key={i} className={cx(splitClass(table.groups, i), table.tones?.[i] === 'bad' && 'due') || undefined}>{r.map((v, j) => <td key={j} className={cx(/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) && 'center', /\S{16,}/.test(String(v)) ? 'break' : String(v).length <= 15 && 'short', printClass(j)) || undefined}>{v}</td>)}</tr>)}
             {!rows.length && <tr><td colSpan={table.columns.length} className="dim">No rows.</td></tr>}
           </tbody>
         </table>
