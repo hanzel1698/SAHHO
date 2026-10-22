@@ -105,7 +105,7 @@ export function PrintSheet({ table, cols, cells, fit, probe, className, ref }: {
             ))}
           </div>
         )}
-        {table.note && <div className="ps-note">{table.note}</div>}
+        {(table.printNote ?? table.note) && <div className="ps-note">{table.printNote ?? table.note}</div>}
       </div>
       <div className="ps-cols">
         {(chunks.length ? chunks : [[0, 0] as const]).map(([from, to]) => (

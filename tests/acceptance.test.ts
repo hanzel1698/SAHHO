@@ -104,6 +104,9 @@ describe('contribution rules', () => {
     expect(t.rows.map(r => r[0])).toEqual(t.rows.map(r => r[0]).sort()); // kept in month order
     const balance = dueRows.find(r => r[0] === sm.partial[0])!;
     expect(Number(balance[2]) * 100).toBe(due(st.state, asha, sm.partial[0]) - paid(st.state, asha.id, sm.partial[0]));
+    expect(t.note).toContain('Unapplied');
+    expect(t.printNote).not.toContain('Unapplied');
+    expect(t.printNote).toContain('Advance');
     const lines = toCSV(t).split('\r\n');
     expect(lines[0]).toBe(t.title);
     expect(lines[1]).toMatch(/^OUTSTANDING AMOUNT,/);

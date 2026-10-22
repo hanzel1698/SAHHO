@@ -164,6 +164,8 @@ export type Table = {
   tones?: ('bad' | undefined)[];
   /** Columns left out of printouts until the user picks their own. */
   printHidden?: string[];
+  /** Note for printouts and PDFs, when it should differ from the on-screen note. */
+  printNote?: string;
   /** Who or what the report is about (a member's name), used to name the PDF. */
   subject?: string;
   /** Key figures shown prominently above the table and at the top of every export. */
@@ -226,6 +228,8 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
         },
       ]
       : [{ label: 'Outstanding amount', value: 'Nil — all dues paid', detail: `Dues through ${ledger.until}`, tone: 'good' }];
+  const noteTail = `Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
+    (splits.length ? ` · Split payment “#1, 200/400(1)” = payment #1, ₹200 of ₹400, part 1.` : '');
   return {
     title: `Member statement — ${m.name} (as of ${cutoff})`,
     columns: ['Month', 'Type', 'Amount (₹)', 'Received', 'Split payment', 'Paid by / source', 'Status', 'Note'],
@@ -235,8 +239,9 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
     summary,
     printHidden: ['Paid by / source', 'Status', 'Note'],
     subject: m.name,
-    note: `Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
-      (splits.length ? ` · Split payment “#1, 200/400(1)” = payment #1, ₹200 of ₹400, part 1.` : ''),
+    note: `Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · ${noteTail}`,
+    // Unapplied money is the treasurer's working figure, not something the member needs on their copy.
+    printNote: `Advance ${rupees(sm.advance)} · ${noteTail}`,
   };
 }
 
