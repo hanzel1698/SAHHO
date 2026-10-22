@@ -1,8 +1,8 @@
 // Acceptance scenarios from the specification, on fictional data.
 import { describe, expect, it } from 'vitest';
-import { State } from '../src/model';
+import { State, money } from '../src/model';
 import { decide, due, linkReversal, paid, planAllocation } from '../src/engine';
-import { Ledger, countedRows, dashboard, memberStatement, monthRanges, receivedByReceiptMonth } from '../src/reports';
+import { Ledger, countedRows, dashboard, memberStatement, monthRanges, receivedByReceiptMonth, toCSV } from '../src/reports';
 import { backupText, parseBackup, validate } from '../src/storage';
 import { demoState, demoStatementCSV } from '../src/demo';
 import { matchMember, trainRules } from '../src/matching';
@@ -82,6 +82,25 @@ describe('contribution rules', () => {
     expect(parts[0][col]).toBe(`#${n} · part 1 of 6 · 1200.00 total`);
     expect(parts[5][col]).toBe(`#${n} · part 6 of 6 · 1200.00 total`);
     expect(new Set(t.groups!.filter(Boolean)).size).toBe(Math.max(...t.groups!.map(g => g ?? 0)));
+  });
+
+  it('leads the member statement with the outstanding amount and months, in the view and the CSV', () => {
+    const s = fixture();
+    const st = importCSV(s, csv([row('10-09-2025', '10 Sep 2025', '600000000012', upi('600000000012', 'ASHA K', 'asha.k@oksbi'), '', '300.00', '10,300.00')]));
+    const asha = st.state.members.find(m => m.name === 'ASHA')!;
+    const sm = new Ledger(st.state, '2026-01-31').summary(asha);
+    const t = memberStatement(st.state, asha.id, '2026-01-31');
+    const months = [...sm.unpaid, ...sm.partial];
+    expect(t.summary![0]).toMatchObject({ label: 'Outstanding amount', tone: 'bad' });
+    expect(t.summary![0].value).toBe(money(sm.outstanding));
+    expect(t.summary![1]).toMatchObject({ label: `Outstanding months (${months.length})`, value: monthRanges(months) });
+    expect(sm.partial).toHaveLength(1);
+    expect(t.summary![1].detail).toContain('1 partly paid');
+    const lines = toCSV(t).split('\r\n');
+    expect(lines[0]).toBe(t.title);
+    expect(lines[1]).toMatch(/^OUTSTANDING AMOUNT,/);
+    expect(lines[2]).toMatch(/^OUTSTANDING MONTHS \(\d+\),/);
+    expect(lines.indexOf(t.columns.join(','))).toBeGreaterThan(2);
   });
 
   it('respects rate changes by effective month and never over-allocates a receipt', () => {

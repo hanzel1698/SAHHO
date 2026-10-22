@@ -33,11 +33,69 @@ export function download(name: string, content: BlobPart, type = 'text/plain') {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+const XL_LINE = { style: 'thin' as const, color: { rgb: 'A9B1BD' } };
+const XL_BOX = { top: XL_LINE, bottom: XL_LINE, left: XL_LINE, right: XL_LINE };
+const XL_TONE = { bad: ['B42318', 'FDECEA'], warn: ['9A5B00', 'FFF4DD'], good: ['1F7A4D', 'E6F4EC'] } as const;
+const XL_GROUP = ['E8F0FB', 'FFF4DD'];
+
+/** Styled workbook: key figures highlighted at the top, then a fully bordered table (header shaded, amounts as numbers). */
 export async function exportXLSX(name: string, tables: Table[]) {
-  const XLSX = await import('xlsx');
+  const mod = await import('xlsx-js-style');
+  const XLSX = mod.default ?? mod;
   const book = XLSX.utils.book_new();
+  const font = (extra: object = {}) => ({ name: 'Arial', sz: 10, ...extra });
   tables.forEach((t, i) => {
-    const sheet = XLSX.utils.aoa_to_sheet([[t.title], ...(t.note ? [[t.note]] : []), [], t.columns, ...t.rows]);
+    const last = Math.max(t.columns.length - 1, 1);
+    const isNum = (j: number) => /\(₹\)/.test(t.columns[j]);
+    const aoa: (string | number)[][] = [[t.title]];
+    const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+    const styles = new Map<string, object>([['0,0', { font: font({ bold: true, sz: 14 }) }]]);
+    for (const x of t.summary ?? []) {
+      const r = aoa.length, [ink, bg] = x.tone ? XL_TONE[x.tone] : ['1D2433', 'EEF0F3'];
+      aoa.push([x.label, x.value]);
+      merges.push({ s: { r, c: 1 }, e: { r, c: last } });
+      const fill = { fgColor: { rgb: bg } };
+      styles.set(`${r},0`, { font: font({ bold: true, color: { rgb: ink } }), fill, border: XL_BOX, alignment: { vertical: 'center' } });
+      for (let c = 1; c <= last; c++) styles.set(`${r},${c}`, { font: font({ bold: true, sz: 13, color: { rgb: ink } }), fill, border: XL_BOX, alignment: { vertical: 'center', wrapText: true } });
+      if (x.detail) {
+        aoa.push(['', x.detail]);
+        merges.push({ s: { r: r + 1, c: 1 }, e: { r: r + 1, c: last } });
+        for (let c = 0; c <= last; c++) styles.set(`${r + 1},${c}`, { font: font({ italic: true, color: { rgb: ink } }), fill, border: XL_BOX, alignment: { wrapText: true } });
+      }
+    }
+    if (t.note) { styles.set(`${aoa.length},0`, { font: font({ italic: true, color: { rgb: '667085' } }) }); aoa.push([t.note]); }
+    aoa.push([]);
+    const head = aoa.length;
+    aoa.push(t.columns);
+    // Amount columns go in as numbers so they align and can be summed.
+    for (const row of t.rows) aoa.push(row.map((v, j) => isNum(j) && typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v));
+    t.columns.forEach((c, j) => styles.set(`${head},${j}`, {
+      font: font({ bold: true }), fill: { fgColor: { rgb: 'E4E8EE' } },
+      border: { ...XL_BOX, bottom: { style: 'medium', color: { rgb: '98A2B3' } } },
+      alignment: { horizontal: isNum(j) ? 'right' : t.center?.includes(c) ? 'center' : 'left', vertical: 'center', wrapText: true },
+    }));
+    t.rows.forEach((_, k) => {
+      const g = t.groups?.[k];
+      t.columns.forEach((c, j) => styles.set(`${head + 1 + k},${j}`, {
+        font: font(), border: XL_BOX, ...(g ? { fill: { fgColor: { rgb: XL_GROUP[(g + 1) % 2] } } } : {}),
+        alignment: { horizontal: isNum(j) ? 'right' : t.center?.includes(c) ? 'center' : 'left', vertical: 'top' },
+        ...(isNum(j) ? { numFmt: '#,##0.00' } : {}),
+      }));
+    });
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    for (const [key, s] of styles) {
+      const [r, c] = key.split(',').map(Number), ref = XLSX.utils.encode_cell({ r, c });
+      (sheet[ref] ??= { t: 's', v: '' }).s = s;
+    }
+    sheet['!merges'] = merges;
+    // Widths follow the table's own content; the label column also fits the summary labels.
+    const width = (v: unknown) => String(v ?? '').length;
+    sheet['!cols'] = t.columns.map((c, j) => ({
+      wch: Math.min(48, Math.max(8, width(c) + 2, ...t.rows.map(r => width(r[j]) + 1), ...(j === 0 ? (t.summary ?? []).map(x => width(x.label) + 2) : []))),
+    }));
+    const span = sheet['!cols'].slice(1).reduce((v, c) => v + (c.wch ?? 0), 0) || 40;
+    // Summary rows grow to fit wrapped text (Excel does not auto-fit merged cells).
+    sheet['!rows'] = aoa.map((r, k) => k === head ? { hpt: 20 } : k > 0 && k < head && typeof r[1] === 'string' && r[1] ? { hpt: Math.ceil(r[1].length / span) * (r[0] ? 18 : 14) + 4 } : {});
     XLSX.utils.book_append_sheet(book, sheet, (t.title.replace(/[^\w ]/g, '').slice(0, 28) || 'Report') + (tables.length > 1 ? i : ''));
   });
   XLSX.writeFile(book, name);
@@ -50,7 +108,7 @@ function splitClass(groups: Table['groups'], i: number) {
   return ['split', `split-${g % 2 ? 'a' : 'b'}`, groups![i - 1] !== g ? 'split-first' : '', groups![i + 1] !== g ? 'split-last' : ''].filter(Boolean).join(' ');
 }
 
-export function ReportTable({ table, limit = 500, compact = false, nowrap = false }: { table: Table; limit?: number; compact?: boolean; nowrap?: boolean }) {
+export function ReportTable({ table, limit = 500, compact = false, nowrap = false, bordered = false }: { table: Table; limit?: number; compact?: boolean; nowrap?: boolean; bordered?: boolean }) {
   const [all, setAll] = useState(false);
   const rows = all ? table.rows : table.rows.slice(0, limit);
   return (
@@ -58,14 +116,25 @@ export function ReportTable({ table, limit = 500, compact = false, nowrap = fals
       <div className="report-head">
         <h3>{table.title}</h3>
         <div className="actions no-print">
-          <button onClick={() => download(`${table.title.replace(/\W+/g, '-')}.csv`, toCSV(table), 'text/csv')}>CSV</button>
+          <button onClick={() => download(`${table.title.replace(/\W+/g, '-')}.csv`, '\uFEFF' + toCSV(table), 'text/csv')}>CSV</button>
           <button onClick={() => void exportXLSX(`${table.title.replace(/\W+/g, '-')}.xlsx`, [table])}>Excel</button>
           <button onClick={() => window.print()}>Print</button>
         </div>
       </div>
+      {table.summary && (
+        <div className="report-summary">
+          {table.summary.map(x => (
+            <div key={x.label} className={cx('summary-item', x.tone)}>
+              <div className="summary-label">{x.label}</div>
+              <div className="summary-value">{x.value}</div>
+              {x.detail && <div className="summary-detail">{x.detail}</div>}
+            </div>
+          ))}
+        </div>
+      )}
       {table.note && <p className="note">{table.note}</p>}
-      <div className="table-wrap">
-        <table className={[compact && 'compact', nowrap && 'nowrap'].filter(Boolean).join(' ') || undefined}>
+      <div className={cx('table-wrap', bordered && 'bordered')}>
+        <table className={cx(compact && 'compact', nowrap && 'nowrap', bordered && 'bordered') || undefined}>
           <thead><tr>{table.columns.map(c => <th key={c} className={table.center?.includes(c) ? 'center' : undefined}>{c}</th>)}</tr></thead>
           <tbody>
             {rows.map((r, i) => <tr key={i} className={splitClass(table.groups, i)}>{r.map((v, j) => <td key={j} className={/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) ? 'center' : undefined}>{v}</td>)}</tr>)}

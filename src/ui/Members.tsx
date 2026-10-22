@@ -147,7 +147,7 @@ function MemberDetail({ m, s, store, cutoff, onClose }: { m: Member; s: ScreenPr
         </>
       )}
       <ErrorLine error={error} />
-      <ReportTable table={memberStatement(s, m.id, cutoff)} />
+      <ReportTable table={memberStatement(s, m.id, cutoff)} bordered />
     </div>
   );
 }

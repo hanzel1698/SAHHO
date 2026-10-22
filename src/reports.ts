@@ -1,5 +1,5 @@
 // Read-only calculations for dashboard, grid and reports. Independent of UI components.
-import { Allocation, Category, Member, Receipt, State, categories, contributionCategories } from './model';
+import { Allocation, Category, Member, Receipt, State, categories, contributionCategories, money } from './model';
 import { LATEST, addMonth, allocationActive, due, lastDueMonth, months, monthOf } from './engine';
 import { balanceBreaks } from './importer';
 
@@ -160,7 +160,11 @@ export type Table = {
   groups?: (number | undefined)[];
   /** Column names whose header and cells are centred. */
   center?: string[];
+  /** Key figures shown prominently above the table and at the top of every export. */
+  summary?: SummaryItem[];
 };
+
+export type SummaryItem = { label: string; value: string; detail?: string; tone?: 'bad' | 'warn' | 'good' };
 
 const rupees = (p: number) => (p / 100).toFixed(2);
 
@@ -191,12 +195,25 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
     groups.push(n);
   }
   const sm = ledger.summary(m);
+  const owed = [...sm.unpaid, ...sm.partial];
+  const summary: SummaryItem[] = !m.start
+    ? [{ label: 'Outstanding amount', value: 'Not calculated', detail: 'Start month not confirmed', tone: 'warn' }]
+    : sm.outstanding > 0
+      ? [
+        { label: 'Outstanding amount', value: money(sm.outstanding), detail: `Dues through ${ledger.until}`, tone: 'bad' },
+        {
+          label: `Outstanding months (${owed.length})`, value: monthRanges(owed), tone: 'bad',
+          detail: sm.partial.length ? `${sm.unpaid.length} unpaid, ${sm.partial.length} partly paid — partly paid: ${monthRanges(sm.partial)}` : undefined,
+        },
+      ]
+      : [{ label: 'Outstanding amount', value: 'Nil — all dues paid', detail: `Dues through ${ledger.until}`, tone: 'good' }];
   return {
     title: `Member statement — ${m.name} (as of ${cutoff})`,
     columns: ['Month', 'Type', 'Amount (₹)', 'Received', 'Split payment', 'Paid by / source', 'Status', 'Note'],
     rows,
     groups,
-    note: `Outstanding ${rupees(sm.outstanding)} · Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
+    summary,
+    note: `Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
       (splits.length ? ` · Rows marked #1, #2 … under “Split payment” are parts of one amount received on that date.` : ''),
   };
 }
@@ -298,7 +315,9 @@ export function reconciliationReport(s: State): Table {
 
 export function toCSV(t: Table) {
   const esc = (v: unknown) => { const x = String(v ?? ''); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
-  return [t.columns, ...t.rows].map(r => r.map(esc).join(',')).join('\r\n');
+  // Tables with key figures open with the title and those figures, so they are the first thing a reader sees.
+  const head = t.summary ? [[t.title], ...t.summary.map(x => [x.label.toUpperCase(), x.value, x.detail ?? '']), ...(t.note ? [[t.note]] : []), []] : [];
+  return [...head, t.columns, ...t.rows].map(r => r.map(esc).join(',')).join('\r\n');
 }
 
 export { addMonth };
