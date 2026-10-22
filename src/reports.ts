@@ -162,6 +162,8 @@ export type Table = {
   center?: string[];
   /** Optional per-row emphasis (parallel to rows); 'bad' rows are shown in red. */
   tones?: ('bad' | undefined)[];
+  /** Columns left out of printouts until the user picks their own. */
+  printHidden?: string[];
   /** Key figures shown prominently above the table and at the top of every export. */
   summary?: SummaryItem[];
 };
@@ -229,6 +231,7 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
     groups,
     tones,
     summary,
+    printHidden: ['Paid by / source', 'Note'],
     note: `Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
       (splits.length ? ` · Split payment “#1, 200/400(1)” = payment #1, ₹200 of ₹400, part 1.` : ''),
   };

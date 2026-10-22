@@ -29,7 +29,7 @@ export function Reports({ s, cutoff }: ScreenProps) {
   }, [kind, s, cutoff, memberId]);
   return (
     <section>
-      <h1>Reports</h1>
+      <h1 className="no-print">Reports</h1>
       <p className="sub no-print">All reports use the reporting date <b>{cutoff}</b> (change it at the top). Historical reports exclude payments received after that date and reversals are applied from their own date.</p>
       <div className="tabs no-print">
         {REPORTS.map(([k, label]) => <button key={k} className={kind === k ? 'on' : ''} onClick={() => setKind(k)}>{label}</button>)}

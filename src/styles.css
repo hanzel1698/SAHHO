@@ -125,6 +125,25 @@ table.bordered thead th:last-child { box-shadow: inset 0 -2px 0 #98a2b3; }
 table.bordered tr.split-first td { border-top: 2px solid var(--dim); }
 table.bordered tr.split-last td { border-bottom: 2px solid var(--dim); }
 .report .actions { margin: 0; }
+.print-only { display: none; }
+/* Printed table: small type, tight cells, its own frame; short values stay on one line, long references break anywhere.
+   A hidden copy (.print-probe) is laid out on screen to measure how many side-by-side tables fit a page. */
+.print-probe { position: absolute; left: -10000px; top: 0; visibility: hidden; pointer-events: none; }
+.print-table { flex: 1 1 0; min-width: 0; font-size: 8.5px; border: 1px solid #98a2b3; }
+table.print-table td, table.print-table th { padding: 1px 3px; line-height: 1.25; }
+table.print-table thead th { position: static; font-size: .95em; vertical-align: bottom; box-shadow: inset -1px 0 0 #cfd5de, inset 0 -1.5px 0 #98a2b3; }
+table.print-table thead th:last-child { box-shadow: inset 0 -1.5px 0 #98a2b3; }
+table.print-table td.short { white-space: nowrap; }
+table.print-table td.break { overflow-wrap: anywhere; }
+.print-table tr.split td:first-child { box-shadow: inset 2px 0 0 var(--info); }
+.print-table tr.split-b td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+/* Separate borders keep cell shading inside the frame: each cell draws only its right and bottom line. */
+table.print-table { border-collapse: separate; border-spacing: 0; }
+table.print-table td { border: none; border-right: 1px solid #cfd5de; border-bottom: 1px solid #cfd5de; }
+table.print-table tr > td:last-child { border-right: none; }
+table.print-table tbody tr:last-child td { border-bottom: none; }
+table.print-table tr.split-first td { border-top: 1.5px solid var(--dim); }
+table.print-table tr.split-last td { border-bottom: 1.5px solid var(--dim); }
 .report .actions button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .print-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; background: var(--info-bg); border: 1px solid #c3d4ee; border-radius: 8px; padding: 8px 12px; margin: 6px 0 8px; }
 .print-pick-title { font-weight: 600; color: var(--info); }
@@ -156,20 +175,30 @@ details { margin: 8px 0; }
   main { padding: 10px; }
 }
 @media print {
-  .no-print, .nav, .banner, .print-hide { display: none !important; }
+  @page { size: A4 portrait; margin: 7mm; }
+  .no-print, .nav, .banner, .print-hide, .screen-only { display: none !important; }
+  .print-only { display: block; }
   .app { display: block; }
+  main { padding: 0; }
   .table-wrap, .grid-wrap { max-height: none; overflow: visible; border: none; }
-  body { background: #fff; font-size: 11px; }
+  body { background: #fff; font-size: 9px; line-height: 1.3; }
   thead th { position: static; }
   .report-summary, .summary-item, table.bordered, table.bordered th, tr.split td, tr.due td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .report-summary { break-inside: avoid; }
-  /* The frame belongs to the table so its edges always meet the row lines; long references wrap so it fits the page. */
-  .table-wrap.bordered { border: none; }
-  table.bordered { border: 1px solid #98a2b3; }
-  table.bordered td.break { overflow-wrap: anywhere; }
-  table.bordered td.short { white-space: nowrap; }
-  table.bordered td, table.bordered th { padding: 4px 5px; }
-  table.bordered th:last-child { width: 26%; }
+  /* Compact heading block: title, key figures and note take about a tenth of the page. */
+  .report-head h3 { font-size: 12px; margin: 0 0 4px; }
+  .report-summary { gap: 6px; margin: 0 0 4px; break-inside: avoid; }
+  .summary-item { min-width: 0; padding: 3px 8px; border-left-width: 4px; border-radius: 4px; }
+  .summary-label { font-size: 7.5px; }
+  .summary-value { font-size: 14px; line-height: 1.2; }
+  .summary-item:not(:first-child) .summary-value { font-size: 11px; }
+  .summary-detail { font-size: 8px; margin-top: 0; }
+  .report .note, .report.compact .note { font-size: 8px; padding: 2px 6px; margin: 0 0 4px; border-radius: 3px; }
+  /* Rows flow into side-by-side tables (count chosen in ReportTable); each table carries its own frame. */
+  .print-cols { display: flex; gap: 6px; align-items: flex-start; }
+  .print-probe { display: none; }
+  .report-summary { flex-wrap: nowrap; }
+  .summary-item:not(:first-child) { flex: 1 1 auto; }
+  .summary-item:first-child { flex: none; white-space: nowrap; }
   table.bordered tr { break-inside: avoid; }
 }
 .signin { max-width: 360px; margin: 10vh auto; display: flex; flex-direction: column; gap: 12px; }
