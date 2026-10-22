@@ -85,6 +85,7 @@ tr.split-b td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
 tr.split-first td { border-top: 2px solid var(--dim); }
 tr.split-last td { border-bottom: 2px solid var(--dim); }
 tr.split td:nth-child(1), tr.split td:nth-child(4), tr.split td:nth-child(5) { white-space: nowrap; }
+tr.due td { color: var(--bad); font-weight: 600; }
 tr.clickable:hover td, .clickable:hover { background: #f7faf9; cursor: pointer; }
 .empty { padding: 30px; text-align: center; color: var(--dim); background: var(--panel); border: 1px dashed var(--line); border-radius: 8px; }
 .welcome .lead { font-size: 16px; max-width: 760px; }
@@ -153,9 +154,17 @@ details { margin: 8px 0; }
   .table-wrap, .grid-wrap { max-height: none; overflow: visible; border: none; }
   body { background: #fff; font-size: 11px; }
   thead th { position: static; }
-  .report-summary, .summary-item, table.bordered, table.bordered th, tr.split td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .report-summary, .summary-item, table.bordered, table.bordered th, tr.split td, tr.due td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .report-summary { break-inside: avoid; }
-  .table-wrap.bordered { border: 1px solid #98a2b3; border-radius: 0; }
+  /* The frame belongs to the table so its edges always meet the row lines; long references and split notes wrap so it fits the page. */
+  .table-wrap.bordered { border: none; }
+  table.bordered { border: 1px solid #98a2b3; }
+  table.bordered td.break { overflow-wrap: anywhere; }
+  table.bordered td.short { white-space: nowrap; }
+  table.bordered td, table.bordered th { padding: 4px 5px; }
+  table.bordered th:last-child { width: 26%; }
+  table.bordered tr.split td:nth-child(5) { white-space: normal; }
+  table.bordered tr { break-inside: avoid; }
 }
 .signin { max-width: 360px; margin: 10vh auto; display: flex; flex-direction: column; gap: 12px; }
 .signin h2 { display: flex; align-items: center; gap: 8px; margin: 0; }

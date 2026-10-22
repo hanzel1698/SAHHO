@@ -160,6 +160,8 @@ export type Table = {
   groups?: (number | undefined)[];
   /** Column names whose header and cells are centred. */
   center?: string[];
+  /** Optional per-row emphasis (parallel to rows); 'bad' rows are shown in red. */
+  tones?: ('bad' | undefined)[];
   /** Key figures shown prominently above the table and at the top of every export. */
   summary?: SummaryItem[];
 };
@@ -196,6 +198,17 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
   }
   const sm = ledger.summary(m);
   const owed = [...sm.unpaid, ...sm.partial];
+  // Each month still owed gets its own red row after that month's payments (and after any split group it falls inside).
+  const tones: Table['tones'] = rows.map(() => undefined);
+  for (const month of [...owed].sort()) {
+    let at = rows.findIndex(r => String(r[0]) > month);
+    if (at < 0) at = rows.length;
+    while (at > 0 && at < rows.length && groups[at] && groups[at] === groups[at - 1]) at++;
+    const left = due(s, m, month) - ledger.paid(m.id, month);
+    rows.splice(at, 0, [month, 'Regular', rupees(left), '', '', '', 'Due - Not paid', sm.partial.includes(month) ? 'Balance of a partly paid month' : '']);
+    groups.splice(at, 0, undefined);
+    tones.splice(at, 0, 'bad');
+  }
   const summary: SummaryItem[] = !m.start
     ? [{ label: 'Outstanding amount', value: 'Not calculated', detail: 'Start month not confirmed', tone: 'warn' }]
     : sm.outstanding > 0
@@ -212,6 +225,7 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
     columns: ['Month', 'Type', 'Amount (₹)', 'Received', 'Split payment', 'Paid by / source', 'Status', 'Note'],
     rows,
     groups,
+    tones,
     summary,
     note: `Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
       (splits.length ? ` · Rows marked #1, #2 … under “Split payment” are parts of one amount received on that date.` : ''),

@@ -75,9 +75,9 @@ export async function exportXLSX(name: string, tables: Table[]) {
       alignment: { horizontal: isNum(j) ? 'right' : t.center?.includes(c) ? 'center' : 'left', vertical: 'center', wrapText: true },
     }));
     t.rows.forEach((_, k) => {
-      const g = t.groups?.[k];
+      const g = t.groups?.[k], bad = t.tones?.[k] === 'bad';
       t.columns.forEach((c, j) => styles.set(`${head + 1 + k},${j}`, {
-        font: font(), border: XL_BOX, ...(g ? { fill: { fgColor: { rgb: XL_GROUP[(g + 1) % 2] } } } : {}),
+        font: font(bad ? { bold: true, color: { rgb: XL_TONE.bad[0] } } : {}), border: XL_BOX, ...(g ? { fill: { fgColor: { rgb: XL_GROUP[(g + 1) % 2] } } } : {}),
         alignment: { horizontal: isNum(j) ? 'right' : t.center?.includes(c) ? 'center' : 'left', vertical: 'top' },
         ...(isNum(j) ? { numFmt: '#,##0.00' } : {}),
       }));
@@ -137,7 +137,7 @@ export function ReportTable({ table, limit = 500, compact = false, nowrap = fals
         <table className={cx(compact && 'compact', nowrap && 'nowrap', bordered && 'bordered') || undefined}>
           <thead><tr>{table.columns.map(c => <th key={c} className={table.center?.includes(c) ? 'center' : undefined}>{c}</th>)}</tr></thead>
           <tbody>
-            {rows.map((r, i) => <tr key={i} className={splitClass(table.groups, i)}>{r.map((v, j) => <td key={j} className={/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) ? 'center' : undefined}>{v}</td>)}</tr>)}
+            {rows.map((r, i) => <tr key={i} className={cx(splitClass(table.groups, i), table.tones?.[i] === 'bad' && 'due') || undefined}>{r.map((v, j) => <td key={j} className={cx(/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) && 'center', /\S{16,}/.test(String(v)) ? 'break' : String(v).length <= 15 && 'short') || undefined}>{v}</td>)}</tr>)}
             {!rows.length && <tr><td colSpan={table.columns.length} className="dim">No rows.</td></tr>}
           </tbody>
         </table>

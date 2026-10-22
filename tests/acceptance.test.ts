@@ -96,6 +96,14 @@ describe('contribution rules', () => {
     expect(t.summary![1]).toMatchObject({ label: `Outstanding months (${months.length})`, value: monthRanges(months) });
     expect(sm.partial).toHaveLength(1);
     expect(t.summary![1].detail).toContain('1 partly paid');
+    const status = t.columns.indexOf('Status');
+    const dueRows = t.rows.filter(r => r[status] === 'Due - Not paid');
+    expect(dueRows.map(r => r[0])).toEqual([...months].sort());
+    expect(dueRows.every(r => t.tones![t.rows.indexOf(r)] === 'bad')).toBe(true);
+    expect(t.tones!.filter(Boolean)).toHaveLength(months.length);
+    expect(t.rows.map(r => r[0])).toEqual(t.rows.map(r => r[0]).sort()); // kept in month order
+    const balance = dueRows.find(r => r[0] === sm.partial[0])!;
+    expect(Number(balance[2]) * 100).toBe(due(st.state, asha, sm.partial[0]) - paid(st.state, asha.id, sm.partial[0]));
     const lines = toCSV(t).split('\r\n');
     expect(lines[0]).toBe(t.title);
     expect(lines[1]).toMatch(/^OUTSTANDING AMOUNT,/);
