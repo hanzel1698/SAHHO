@@ -82,8 +82,6 @@ tr.split-a td { background: var(--info-bg); }
 tr.split-b td { background: var(--warn-bg); }
 tr.split td:first-child { box-shadow: inset 4px 0 0 var(--info); }
 tr.split-b td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
-tr.split-first td { border-top: 2px solid var(--dim); }
-tr.split-last td { border-bottom: 2px solid var(--dim); }
 tr.split td:nth-child(1), tr.split td:nth-child(4), tr.split td:nth-child(5) { white-space: nowrap; }
 tr.due td { color: var(--bad); font-weight: 600; }
 tr.clickable:hover td, .clickable:hover { background: #f7faf9; cursor: pointer; }
@@ -122,28 +120,38 @@ table.bordered tbody tr:last-child td { border-bottom: none; }
 /* Header lines are drawn as shadows so they stay visible while the sticky header scrolls. */
 table.bordered thead th { border: none; background: #e9edf2; color: var(--ink); box-shadow: inset -1px 0 0 #cfd5de, inset 0 -2px 0 #98a2b3; }
 table.bordered thead th:last-child { box-shadow: inset 0 -2px 0 #98a2b3; }
-table.bordered tr.split-first td { border-top: 2px solid var(--dim); }
-table.bordered tr.split-last td { border-bottom: 2px solid var(--dim); }
 .report .actions { margin: 0; }
 .print-only { display: none; }
-/* Printed table: small type, tight cells, its own frame; short values stay on one line, long references break anywhere.
-   A hidden copy (.print-probe) is laid out on screen to measure how many side-by-side tables fit a page. */
-.print-probe { position: absolute; left: -10000px; top: 0; visibility: hidden; pointer-events: none; }
-.print-table { flex: 1 1 0; min-width: 0; font-size: 8.5px; border: 1px solid #98a2b3; }
-table.print-table td, table.print-table th { padding: 1px 3px; line-height: 1.25; }
-table.print-table thead th { position: static; font-size: .95em; vertical-align: bottom; box-shadow: inset -1px 0 0 #cfd5de, inset 0 -1.5px 0 #98a2b3; }
+/* Printed / PDF sheet (see ui/print.tsx). A hidden full-length copy (.print-probe) is laid out on screen to
+   measure the largest type that fits one page; .capturing shows the real sheet off-screen while the PDF is drawn. */
+.print-sheet { color: var(--ink); background: #fff; font-size: 10px; line-height: 1.3; }
+.print-probe, .print-sheet.capturing { display: block; position: absolute; left: -10000px; top: 0; width: 740px; }
+.print-probe { visibility: hidden; pointer-events: none; }
+.print-probe .ps-cols { display: block; } /* no flex stretch, so the measured table keeps the width being tried */
+.print-probe .print-table { flex: none; }
+.ps-title { font-size: 16px; font-weight: 700; margin: 0 0 6px; }
+.ps-summary { display: flex; gap: 6px; margin: 0 0 6px; }
+.ps-summary .summary-item { min-width: 0; padding: 4px 10px; border-left-width: 4px; border-radius: 4px; }
+.ps-summary .summary-item:first-child { flex: none; white-space: nowrap; }
+.ps-summary .summary-item:not(:first-child) { flex: 1 1 auto; }
+.ps-summary .summary-label { font-size: 10px; }
+.ps-summary .summary-value { font-size: 20px; line-height: 1.2; }
+.ps-summary .summary-item:not(:first-child) .summary-value { font-size: 14px; }
+.ps-summary .summary-detail { font-size: 10px; margin-top: 0; }
+.ps-note { font-size: 10px; color: var(--dim); background: var(--muted-bg); padding: 3px 8px; border-radius: 3px; margin: 0 0 6px; }
+.ps-cols { display: flex; gap: 8px; align-items: flex-start; }
+/* Printed table: its own frame, separate borders (shading stays inside it), cell padding that grows with the type. */
+.print-table { flex: 1 1 0; min-width: 0; border: 1px solid #98a2b3; border-collapse: separate; border-spacing: 0; }
+table.print-table td, table.print-table th { padding: .18em .4em; line-height: 1.3; }
+table.print-table thead th { position: static; font-size: 1em; color: var(--ink); background: #e9edf2; vertical-align: bottom; border: none; box-shadow: inset -1px 0 0 #cfd5de, inset 0 -1.5px 0 #98a2b3; }
 table.print-table thead th:last-child { box-shadow: inset 0 -1.5px 0 #98a2b3; }
+table.print-table td { border: none; border-right: 1px solid #cfd5de; border-bottom: 1px solid #cfd5de; }
+table.print-table tr > td:last-child { border-right: none; }
+table.print-table tbody tr:last-child td { border-bottom: none; }
 table.print-table td.short { white-space: nowrap; }
 table.print-table td.break { overflow-wrap: anywhere; }
 .print-table tr.split td:first-child { box-shadow: inset 2px 0 0 var(--info); }
 .print-table tr.split-b td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
-/* Separate borders keep cell shading inside the frame: each cell draws only its right and bottom line. */
-table.print-table { border-collapse: separate; border-spacing: 0; }
-table.print-table td { border: none; border-right: 1px solid #cfd5de; border-bottom: 1px solid #cfd5de; }
-table.print-table tr > td:last-child { border-right: none; }
-table.print-table tbody tr:last-child td { border-bottom: none; }
-table.print-table tr.split-first td { border-top: 1.5px solid var(--dim); }
-table.print-table tr.split-last td { border-bottom: 1.5px solid var(--dim); }
 .report .actions button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .print-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; background: var(--info-bg); border: 1px solid #c3d4ee; border-radius: 8px; padding: 8px 12px; margin: 6px 0 8px; }
 .print-pick-title { font-weight: 600; color: var(--info); }
@@ -176,30 +184,16 @@ details { margin: 8px 0; }
 }
 @media print {
   @page { size: A4 portrait; margin: 7mm; }
-  .no-print, .nav, .banner, .print-hide, .screen-only { display: none !important; }
+  /* Only the print sheet is printed; the screen table, toolbars and navigation are left out. */
+  .no-print, .nav, .banner, .print-hide, .screen-only, .print-probe { display: none !important; }
   .print-only { display: block; }
   .app { display: block; }
   main { padding: 0; }
   .table-wrap, .grid-wrap { max-height: none; overflow: visible; border: none; }
-  body { background: #fff; font-size: 9px; line-height: 1.3; }
+  body { background: #fff; font-size: 10px; }
   thead th { position: static; }
-  .report-summary, .summary-item, table.bordered, table.bordered th, tr.split td, tr.due td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  /* Compact heading block: title, key figures and note take about a tenth of the page. */
-  .report-head h3 { font-size: 12px; margin: 0 0 4px; }
-  .report-summary { gap: 6px; margin: 0 0 4px; break-inside: avoid; }
-  .summary-item { min-width: 0; padding: 3px 8px; border-left-width: 4px; border-radius: 4px; }
-  .summary-label { font-size: 7.5px; }
-  .summary-value { font-size: 14px; line-height: 1.2; }
-  .summary-item:not(:first-child) .summary-value { font-size: 11px; }
-  .summary-detail { font-size: 8px; margin-top: 0; }
-  .report .note, .report.compact .note { font-size: 8px; padding: 2px 6px; margin: 0 0 4px; border-radius: 3px; }
-  /* Rows flow into side-by-side tables (count chosen in ReportTable); each table carries its own frame. */
-  .print-cols { display: flex; gap: 6px; align-items: flex-start; }
-  .print-probe { display: none; }
-  .report-summary { flex-wrap: nowrap; }
-  .summary-item:not(:first-child) { flex: 1 1 auto; }
-  .summary-item:first-child { flex: none; white-space: nowrap; }
-  table.bordered tr { break-inside: avoid; }
+  .print-sheet, .print-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-table tr { break-inside: avoid; }
 }
 .signin { max-width: 360px; margin: 10vh auto; display: flex; flex-direction: column; gap: 12px; }
 .signin h2 { display: flex; align-items: center; gap: 8px; margin: 0; }

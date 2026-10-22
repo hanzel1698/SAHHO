@@ -164,6 +164,8 @@ export type Table = {
   tones?: ('bad' | undefined)[];
   /** Columns left out of printouts until the user picks their own. */
   printHidden?: string[];
+  /** Who or what the report is about (a member's name), used to name the PDF. */
+  subject?: string;
   /** Key figures shown prominently above the table and at the top of every export. */
   summary?: SummaryItem[];
 };
@@ -202,14 +204,14 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
   }
   const sm = ledger.summary(m);
   const owed = [...sm.unpaid, ...sm.partial];
-  // Each month still owed gets its own red row after that month's payments (and after any split group it falls inside).
+  // Each month still owed gets its own red row, marked in the Received column, after that month's payments (and after any split group it falls inside).
   const tones: Table['tones'] = rows.map(() => undefined);
   for (const month of [...owed].sort()) {
     let at = rows.findIndex(r => String(r[0]) > month);
     if (at < 0) at = rows.length;
     while (at > 0 && at < rows.length && groups[at] && groups[at] === groups[at - 1]) at++;
     const left = due(s, m, month) - ledger.paid(m.id, month);
-    rows.splice(at, 0, [month, 'Regular', rupees(left), '', '', '', 'Due - Not paid', sm.partial.includes(month) ? 'Balance of a partly paid month' : '']);
+    rows.splice(at, 0, [month, 'Regular', rupees(left), 'Due - Not paid', '', '', '', sm.partial.includes(month) ? 'Balance of a partly paid month' : '']);
     groups.splice(at, 0, undefined);
     tones.splice(at, 0, 'bad');
   }
@@ -231,7 +233,8 @@ export function memberStatement(s: State, memberId: string, cutoff: string): Tab
     groups,
     tones,
     summary,
-    printHidden: ['Paid by / source', 'Note'],
+    printHidden: ['Paid by / source', 'Status', 'Note'],
+    subject: m.name,
     note: `Advance ${rupees(sm.advance)} · Unapplied ${rupees(sm.unapplied)} · Start ${m.start ?? 'not confirmed'} · Joining ${m.joined ?? m.joiningMonth ?? 'not recorded'}` +
       (splits.length ? ` · Split payment “#1, 200/400(1)” = payment #1, ₹200 of ₹400, part 1.` : ''),
   };

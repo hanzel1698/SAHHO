@@ -1,6 +1,7 @@
-import { ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { ReactNode, useRef, useState } from 'react';
 import { State, money } from '../model';
 import { Table, toCSV } from '../reports';
+import { PrintCells, PrintSheet, printAs, printName, savePDF, usePrintFit, usePrintHidden } from './print';
 
 export const cx = (...c: (string | false | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -101,103 +102,44 @@ export async function exportXLSX(name: string, tables: Table[]) {
   XLSX.writeFile(book, name);
 }
 
-/** Shading for grouped rows: alternating tints per group, with a bracket on the first and last row of each group. */
+/** Shading for grouped rows: alternating tints per group. */
 function splitClass(groups: Table['groups'], i: number) {
   const g = groups?.[i];
   if (!g) return undefined;
-  return ['split', `split-${g % 2 ? 'a' : 'b'}`, groups![i - 1] !== g ? 'split-first' : '', groups![i + 1] !== g ? 'split-last' : ''].filter(Boolean).join(' ');
-}
-
-const PRINT_COLUMNS_KEY = 'sahho-print-hidden-columns';
-
-/** Columns left out of printouts, remembered in this browser per table layout (its column list). */
-function usePrintHidden(columns: string[], defaults: string[] = []) {
-  const layout = columns.join('|');
-  const [saved, setSaved] = useState<Record<string, string[]>>(() => {
-    try { return JSON.parse(localStorage.getItem(PRINT_COLUMNS_KEY) ?? '{}') ?? {}; } catch { return {}; }
-  });
-  const hidden = (saved[layout] ?? defaults).filter(c => columns.includes(c));
-  const setHidden = (list: string[]) => {
-    const next = { ...saved, [layout]: list };
-    setSaved(next);
-    try { localStorage.setItem(PRINT_COLUMNS_KEY, JSON.stringify(next)); } catch { /* not remembered; still applies for now */ }
-  };
-  return [hidden, setHidden] as const;
-}
-
-// Printable area of an A4 portrait page with 7mm margins, in CSS px.
-const PRINT_WIDTH_PX = 740;
-const PRINT_GAP_PX = 6;
-/** Height left for table rows once the title, key figures and note are printed above them. */
-const PRINT_TABLE_HEIGHT_PX = 900;
-
-/** Print type sizes to try, largest first, before letting a report run onto a second page. */
-const PRINT_FONT_STEPS = [8.5, 7.5, 6.5];
-
-type PrintFit = { count: number; font: number; widths: number[] };
-
-/**
- * Picks how the printed rows are laid out: the largest type and fewest side-by-side tables that fit
- * one page, as long as each table still fits its share of the width. Measured on a hidden copy of the
- * print table; also returns its column widths (%) so every side-by-side table lines up the same way.
- */
-function usePrintFit(probe: React.RefObject<HTMLTableElement | null>, deps: unknown[]) {
-  const [fit, setFit] = useState<PrintFit>({ count: 1, font: PRINT_FONT_STEPS[0], widths: [] });
-  useLayoutEffect(() => {
-    const t = probe.current;
-    if (!t) return;
-    const slot = (n: number) => (PRINT_WIDTH_PX - PRINT_GAP_PX * (n - 1)) / n;
-    const apply = (n: number, font: number) => { t.style.width = `${slot(n)}px`; t.style.fontSize = `${font}px`; };
-    let choice: { count: number; font: number } | undefined, widest = 1;
-    search: for (const font of PRINT_FONT_STEPS) {
-      for (let n = 1; n <= 3; n++) {
-        apply(n, font);
-        if (n > 1 && t.offsetWidth > slot(n) + 1) break;
-        if (font === PRINT_FONT_STEPS[0]) widest = n;
-        if (t.offsetHeight / n <= PRINT_TABLE_HEIGHT_PX) { choice = { count: n, font }; break search; }
-      }
-    }
-    // Too long for one page even at the smallest type: keep the normal type and use as many tables as fit across.
-    choice ??= { count: widest, font: PRINT_FONT_STEPS[0] };
-    apply(choice.count, choice.font);
-    const cells = [...t.querySelectorAll('thead th')].map(th => (th as HTMLElement).offsetWidth);
-    const total = cells.reduce((v, w) => v + w, 0) || 1;
-    const next = { ...choice, widths: cells.map(w => w / total * 100) };
-    setFit(f => f.count === next.count && f.font === next.font && f.widths.join() === next.widths.join() ? f : next);
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
-  return fit;
+  return `split split-${g % 2 ? 'a' : 'b'}`;
 }
 
 export function ReportTable({ table, limit = 500, compact = false, nowrap = false, bordered = false }: { table: Table; limit?: number; compact?: boolean; nowrap?: boolean; bordered?: boolean }) {
   const [all, setAll] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [hidden, setHidden] = usePrintHidden(table.columns, table.printHidden);
   const rows = all ? table.rows : table.rows.slice(0, limit);
   const printClass = (j: number) => hidden.includes(table.columns[j]) ? 'print-hide' : undefined;
   const printCols = table.columns.map((_, j) => j).filter(j => !hidden.includes(table.columns[j]));
-  const probe = useRef<HTMLTableElement>(null);
+  const sheet = useRef<HTMLDivElement>(null), probe = useRef<HTMLDivElement>(null);
   const fit = usePrintFit(probe, [table, printCols.join('|')]);
-  const per = Math.ceil(table.rows.length / fit.count) || 1;
-  const chunks = Array.from({ length: fit.count }, (_, i) => [i * per, Math.min(table.rows.length, (i + 1) * per)] as const).filter(([a, b]) => b > a);
-  const headClass = (j: number) => table.center?.includes(table.columns[j]) ? 'center' : undefined;
-  const cellClass = (v: string | number, j: number) => cx(/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) && 'center', /\S{16,}/.test(String(v)) ? 'break' : String(v).length <= 15 && 'short');
-  const rowClass = (i: number) => cx(splitClass(table.groups, i), table.tones?.[i] === 'bad' && 'due') || undefined;
-  const printTable = (from: number, to: number, ref?: React.Ref<HTMLTableElement>) => (
-    <table key={from} ref={ref} className="bordered print-table" style={ref ? undefined : { fontSize: `${fit.font}px`, tableLayout: fit.widths.length === printCols.length ? 'fixed' : undefined }}>
-      {!ref && fit.widths.length === printCols.length && <colgroup>{fit.widths.map((w, x) => <col key={x} style={{ width: `${w}%` }} />)}</colgroup>}
-      <thead><tr>{printCols.map(j => <th key={j} className={headClass(j)}>{table.columns[j]}</th>)}</tr></thead>
-      <tbody>{table.rows.slice(from, to).map((r, i) => <tr key={i} className={rowClass(from + i)}>{printCols.map(j => <td key={j} className={cellClass(r[j], j) || undefined}>{r[j]}</td>)}</tr>)}</tbody>
-    </table>
-  );
+  const cells: PrintCells = {
+    headClass: j => table.center?.includes(table.columns[j]) ? 'center' : undefined,
+    cellClass: (v, j) => cx(/\(₹\)/.test(table.columns[j]) ? 'num' : table.center?.includes(table.columns[j]) && 'center', /\S{16,}/.test(String(v)) ? 'break' : String(v).length <= 15 && 'short') || undefined,
+    rowClass: i => cx(splitClass(table.groups, i), table.tones?.[i] === 'bad' && 'due') || undefined,
+  };
+  const name = printName(table);
+  const pdf = async () => {
+    if (!sheet.current) return;
+    setSaving(true);
+    try { await savePDF(sheet.current, name); } finally { setSaving(false); }
+  };
   const toggle = (c: string) => setHidden(hidden.includes(c) ? hidden.filter(x => x !== c) : [...hidden, c]);
   return (
     <div className={compact ? 'report compact' : 'report'}>
-      <div className="report-head">
+      <div className="report-head screen-only">
         <h3>{table.title}</h3>
         <div className="actions no-print">
           <button onClick={() => download(`${table.title.replace(/\W+/g, '-')}.csv`, '\uFEFF' + toCSV(table), 'text/csv')}>CSV</button>
           <button onClick={() => void exportXLSX(`${table.title.replace(/\W+/g, '-')}.xlsx`, [table])}>Excel</button>
           <button className={picking ? 'on' : undefined} onClick={() => setPicking(!picking)}>Print…</button>
+          <button disabled={saving} onClick={() => void pdf()} title={`Saves ${name}.pdf`}>{saving ? 'Saving…' : 'PDF'}</button>
         </div>
       </div>
       {picking && (
@@ -210,13 +152,14 @@ export function ReportTable({ table, limit = 500, compact = false, nowrap = fals
           ))}
           <div className="actions">
             {hidden.length > 0 && <button className="link" onClick={() => setHidden([])}>Select all</button>}
-            <button className="primary" onClick={() => { window.print(); setPicking(false); }}>Print {table.columns.length - hidden.length} of {table.columns.length} columns</button>
+            <button className="primary" onClick={() => { printAs(name); setPicking(false); }}>Print {table.columns.length - hidden.length} of {table.columns.length} columns</button>
+            <button disabled={saving} onClick={() => void pdf()}>{saving ? 'Saving…' : 'Save PDF'}</button>
             <button onClick={() => setPicking(false)}>Close</button>
           </div>
         </div>
       )}
       {table.summary && (
-        <div className="report-summary">
+        <div className="report-summary screen-only">
           {table.summary.map(x => (
             <div key={x.label} className={cx('summary-item', x.tone)}>
               <div className="summary-label">{x.label}</div>
@@ -226,21 +169,19 @@ export function ReportTable({ table, limit = 500, compact = false, nowrap = fals
           ))}
         </div>
       )}
-      {table.note && <p className="note">{table.note}</p>}
+      {table.note && <p className="note screen-only">{table.note}</p>}
       <div className={cx('table-wrap screen-only', bordered && 'bordered')}>
         <table className={cx(compact && 'compact', nowrap && 'nowrap', bordered && 'bordered', picking && 'picking') || undefined}>
-          <thead><tr>{table.columns.map((c, j) => <th key={c} className={cx(headClass(j), printClass(j)) || undefined}>{c}</th>)}</tr></thead>
+          <thead><tr>{table.columns.map((c, j) => <th key={c} className={cx(cells.headClass(j), printClass(j)) || undefined}>{c}</th>)}</tr></thead>
           <tbody>
-            {rows.map((r, i) => <tr key={i} className={rowClass(i)}>{r.map((v, j) => <td key={j} className={cx(cellClass(v, j), printClass(j)) || undefined}>{v}</td>)}</tr>)}
+            {rows.map((r, i) => <tr key={i} className={cells.rowClass(i)}>{r.map((v, j) => <td key={j} className={cx(cells.cellClass(v, j), printClass(j)) || undefined}>{v}</td>)}</tr>)}
             {!rows.length && <tr><td colSpan={table.columns.length} className="dim">No rows.</td></tr>}
           </tbody>
         </table>
       </div>
       {table.rows.length > rows.length && <button className="link no-print" onClick={() => setAll(true)}>Show all {table.rows.length} rows</button>}
-      <div className="print-cols print-only">
-        {chunks.map(([from, to]) => printTable(from, to))}
-      </div>
-      <div className="print-probe" aria-hidden>{printTable(0, table.rows.length, probe)}</div>
+      <PrintSheet ref={sheet} className="print-only" table={table} cols={printCols} cells={cells} fit={fit} />
+      <PrintSheet ref={probe} className="print-probe" probe table={table} cols={printCols} cells={cells} fit={fit} />
     </div>
   );
 }

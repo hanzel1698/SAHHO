@@ -96,8 +96,8 @@ describe('contribution rules', () => {
     expect(t.summary![1]).toMatchObject({ label: `Outstanding months (${months.length})`, value: monthRanges(months) });
     expect(sm.partial).toHaveLength(1);
     expect(t.summary![1].detail).toContain('1 partly paid');
-    const status = t.columns.indexOf('Status');
-    const dueRows = t.rows.filter(r => r[status] === 'Due - Not paid');
+    const received = t.columns.indexOf('Received');
+    const dueRows = t.rows.filter(r => r[received] === 'Due - Not paid');
     expect(dueRows.map(r => r[0])).toEqual([...months].sort());
     expect(dueRows.every(r => t.tones![t.rows.indexOf(r)] === 'bad')).toBe(true);
     expect(t.tones!.filter(Boolean)).toHaveLength(months.length);
